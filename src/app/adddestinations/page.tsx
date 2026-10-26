@@ -1,17 +1,32 @@
 "use client";
 
 import { useState } from "react";
+import type { ChangeEvent, FormEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Loader2, ArrowLeft, X, Plus } from "lucide-react";
+import { Loader2, ArrowLeft, X, Plus, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
+
+const API_URL = "http://localhost:5000";
+
+type FormData = {
+  destinationName: string;
+  country: string;
+  category: string;
+  price: string;
+  duration: string;
+  departureDate: string;
+  imageUrl: string;
+  description: string;
+};
 
 export default function AddDestinationClient() {
   const router = useRouter();
+
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  const [formData, setFormData] = useState({
+  const [formData, setFormData] = useState<FormData>({
     destinationName: "",
     country: "",
     category: "Beach",
@@ -23,38 +38,112 @@ export default function AddDestinationClient() {
   });
 
   const handleChange = (
-    e: React.ChangeEvent<
-      HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
-    >,
+    e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>,
   ) => {
     const { name, value } = e.target;
-    setFormData((prev) => ({ ...prev, [name]: value }));
+
+    setFormData((prev) => ({
+      ...prev,
+      [name]: value,
+    }));
+
+    if (error) setError("");
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+
+    if (loading) return;
+
+    const destinationName = formData.destinationName.trim();
+    const country = formData.country.trim();
+    const duration = formData.duration.trim();
+    const description = formData.description.trim();
+    const price = Number(formData.price);
+
+    if (!destinationName || !country || !duration || !description) {
+      setError("Please fill in all required fields.");
+      return;
+    }
+
+    if (formData.price.trim() === "" || !Number.isFinite(price) || price < 0) {
+      setError("Please enter a valid non-negative price.");
+      return;
+    }
+
+    if (
+      formData.imageUrl.trim() &&
+      !/^https?:\/\/\S+$/i.test(formData.imageUrl.trim())
+    ) {
+      setError("Please enter a valid image URL.");
+      return;
+    }
+
     setError("");
     setLoading(true);
 
     try {
-      const response = await fetch("http://localhost:5000/adddestinations", {
+      const payload = {
+        destinationName,
+        country,
+        category: formData.category,
+        price,
+        duration,
+        departureDate: formData.departureDate,
+        imageUrl: formData.imageUrl.trim(),
+        description,
+      };
+
+      const response = await fetch(`${API_URL}/adddestinations`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          Accept: "application/json",
         },
-        body: JSON.stringify(formData),
+        body: JSON.stringify(payload),
       });
 
-      const data = await response.json();
+      const responseText = await response.text();
+
+      let data: {
+        message?: string;
+        destination?: { _id?: string };
+        package?: { _id?: string };
+      };
+
+      try {
+        data = responseText ? JSON.parse(responseText) : {};
+      } catch {
+        throw new Error(
+          `Invalid response from server (${response.status}). Please check your backend.`,
+        );
+      }
 
       if (!response.ok) {
-        throw new Error(data.message || "Failed to create travel package");
+        throw new Error(
+          data.message || `Failed to create package (${response.status}).`,
+        );
       }
+
+      setFormData({
+        destinationName: "",
+        country: "",
+        category: "Beach",
+        price: "",
+        duration: "",
+        departureDate: "",
+        imageUrl: "",
+        description: "",
+      });
 
       router.push("/destinations");
       router.refresh();
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Something went wrong.");
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Something went wrong. Please try again.",
+      );
     } finally {
       setLoading(false);
     }
@@ -79,37 +168,60 @@ export default function AddDestinationClient() {
           </h1>
 
           {error && (
-            <div className="mb-6 break-words border border-rose-200 bg-rose-50 p-3 text-xs text-rose-600 sm:text-sm">
-              {error}
+            <div
+              role="alert"
+              className="mb-6 flex min-w-0 items-start gap-2 border border-rose-200 bg-rose-50 p-3 text-xs text-rose-600 sm:text-sm"
+            >
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+              <p className="min-w-0 flex-1 break-words">{error}</p>
+              <button
+                type="button"
+                onClick={() => setError("")}
+                aria-label="Dismiss error"
+                className="shrink-0"
+              >
+                <X className="h-4 w-4" />
+              </button>
             </div>
           )}
 
           <form onSubmit={handleSubmit} className="space-y-5 sm:space-y-6">
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 sm:gap-5 md:gap-6">
               <div className="min-w-0 space-y-1.5">
-                <label className="block text-xs font-medium text-slate-600">
+                <label
+                  htmlFor="destinationName"
+                  className="block text-xs font-medium text-slate-600"
+                >
                   Destination Name
                 </label>
                 <input
+                  id="destinationName"
                   type="text"
                   name="destinationName"
                   value={formData.destinationName}
                   onChange={handleChange}
                   placeholder="Bali Paradise"
                   required
-                  className="w-full min-w-0 border border-slate-200 px-3 py-2.5 text-sm text-slate-800 outline-none transition focus:border-[#15A1BF]"
+                  maxLength={150}
+                  disabled={loading}
+                  className="w-full min-w-0 border border-slate-200 px-3 py-2.5 text-sm text-slate-800 outline-none transition focus:border-[#15A1BF] disabled:bg-slate-50"
                 />
               </div>
 
               <div className="min-w-0 space-y-1.5">
-                <label className="block text-xs font-medium text-slate-600">
+                <label
+                  htmlFor="category"
+                  className="block text-xs font-medium text-slate-600"
+                >
                   Category
                 </label>
                 <select
+                  id="category"
                   name="category"
                   value={formData.category}
                   onChange={handleChange}
-                  className="w-full min-w-0 border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none transition focus:border-[#15A1BF]"
+                  disabled={loading}
+                  className="w-full min-w-0 border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none transition focus:border-[#15A1BF] disabled:bg-slate-50"
                 >
                   <option value="Beach">Beach</option>
                   <option value="Mountain">Mountain</option>
@@ -120,39 +232,56 @@ export default function AddDestinationClient() {
               </div>
 
               <div className="min-w-0 space-y-1.5">
-                <label className="block text-xs font-medium text-slate-600">
+                <label
+                  htmlFor="country"
+                  className="block text-xs font-medium text-slate-600"
+                >
                   Country
                 </label>
                 <input
+                  id="country"
                   type="text"
                   name="country"
                   value={formData.country}
                   onChange={handleChange}
                   placeholder="Indonesia"
                   required
-                  className="w-full min-w-0 border border-slate-200 px-3 py-2.5 text-sm text-slate-800 outline-none transition focus:border-[#15A1BF]"
+                  maxLength={100}
+                  disabled={loading}
+                  className="w-full min-w-0 border border-slate-200 px-3 py-2.5 text-sm text-slate-800 outline-none transition focus:border-[#15A1BF] disabled:bg-slate-50"
                 />
               </div>
 
               <div className="min-w-0 space-y-1.5">
-                <label className="block text-xs font-medium text-slate-600">
+                <label
+                  htmlFor="duration"
+                  className="block text-xs font-medium text-slate-600"
+                >
                   Duration
                 </label>
                 <input
+                  id="duration"
                   type="text"
                   name="duration"
                   value={formData.duration}
                   onChange={handleChange}
                   placeholder="7 Days / 6 Nights"
-                  className="w-full min-w-0 border border-slate-200 px-3 py-2.5 text-sm text-slate-800 outline-none transition focus:border-[#15A1BF]"
+                  required
+                  maxLength={100}
+                  disabled={loading}
+                  className="w-full min-w-0 border border-slate-200 px-3 py-2.5 text-sm text-slate-800 outline-none transition focus:border-[#15A1BF] disabled:bg-slate-50"
                 />
               </div>
 
               <div className="min-w-0 space-y-1.5">
-                <label className="block text-xs font-medium text-slate-600">
+                <label
+                  htmlFor="price"
+                  className="block text-xs font-medium text-slate-600"
+                >
                   Price (USD)
                 </label>
                 <input
+                  id="price"
                   type="number"
                   name="price"
                   value={formData.price}
@@ -160,49 +289,68 @@ export default function AddDestinationClient() {
                   placeholder="1299"
                   required
                   min="0"
-                  className="w-full min-w-0 border border-slate-200 px-3 py-2.5 text-sm text-slate-800 outline-none transition focus:border-[#15A1BF]"
+                  step="any"
+                  disabled={loading}
+                  className="w-full min-w-0 border border-slate-200 px-3 py-2.5 text-sm text-slate-800 outline-none transition focus:border-[#15A1BF] disabled:bg-slate-50"
                 />
               </div>
 
               <div className="min-w-0 space-y-1.5">
-                <label className="block text-xs font-medium text-slate-600">
+                <label
+                  htmlFor="departureDate"
+                  className="block text-xs font-medium text-slate-600"
+                >
                   Departure Date
                 </label>
                 <input
+                  id="departureDate"
                   type="date"
                   name="departureDate"
                   value={formData.departureDate}
                   onChange={handleChange}
-                  className="w-full min-w-0 max-w-full appearance-none border border-slate-200 px-2 py-2.5 text-sm text-slate-800 outline-none transition focus:border-[#15A1BF] sm:px-3"
+                  disabled={loading}
+                  className="w-full min-w-0 max-w-full appearance-none border border-slate-200 px-2 py-2.5 text-sm text-slate-800 outline-none transition focus:border-[#15A1BF] disabled:bg-slate-50 sm:px-3"
                 />
               </div>
             </div>
 
             <div className="min-w-0 space-y-1.5">
-              <label className="block text-xs font-medium text-slate-600">
+              <label
+                htmlFor="imageUrl"
+                className="block text-xs font-medium text-slate-600"
+              >
                 Image URL
               </label>
               <input
+                id="imageUrl"
                 type="url"
                 name="imageUrl"
                 value={formData.imageUrl}
                 onChange={handleChange}
                 placeholder="https://example.com/image.jpg"
-                className="w-full min-w-0 border border-slate-200 px-3 py-2.5 text-sm text-slate-800 outline-none transition focus:border-[#15A1BF]"
+                disabled={loading}
+                className="w-full min-w-0 border border-slate-200 px-3 py-2.5 text-sm text-slate-800 outline-none transition focus:border-[#15A1BF] disabled:bg-slate-50"
               />
             </div>
 
             <div className="min-w-0 space-y-1.5">
-              <label className="block text-xs font-medium text-slate-600">
+              <label
+                htmlFor="description"
+                className="block text-xs font-medium text-slate-600"
+              >
                 Description
               </label>
               <textarea
+                id="description"
                 name="description"
                 rows={4}
                 value={formData.description}
                 onChange={handleChange}
                 placeholder="Describe the travel experience..."
-                className="w-full min-w-0 resize-y border border-slate-200 px-3 py-2.5 text-sm text-slate-800 outline-none transition focus:border-[#15A1BF]"
+                required
+                maxLength={5000}
+                disabled={loading}
+                className="w-full min-w-0 resize-y border border-slate-200 px-3 py-2.5 text-sm text-slate-800 outline-none transition focus:border-[#15A1BF] disabled:bg-slate-50"
               />
             </div>
 
@@ -210,6 +358,7 @@ export default function AddDestinationClient() {
               <Button
                 type="button"
                 variant="outline"
+                disabled={loading}
                 onClick={() => router.push("/destinations")}
                 className="w-full gap-2 rounded-none border-rose-300 bg-white px-5 py-2.5 text-sm font-medium text-rose-600 transition hover:border-rose-500 hover:bg-rose-50 hover:text-rose-700 sm:w-auto"
               >
@@ -223,11 +372,16 @@ export default function AddDestinationClient() {
                 className="w-full gap-2 rounded-none bg-[#15A1BF] px-6 py-2.5 text-sm font-semibold text-white transition hover:bg-[#11869F] disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
               >
                 {loading ? (
-                  <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
+                  <>
+                    <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
+                    Adding Package...
+                  </>
                 ) : (
-                  <Plus className="h-4 w-4 shrink-0" />
+                  <>
+                    <Plus className="h-4 w-4 shrink-0" />
+                    Add Travel Package
+                  </>
                 )}
-                {loading ? "Adding Package..." : "Add Travel Package"}
               </Button>
             </div>
           </form>

@@ -5,7 +5,9 @@ import { auth } from "@/lib/auth";
 import clientPromise from "@/lib/mongodb";
 
 function isValidDate(date: unknown): date is string {
-  if (typeof date !== "string") return false;
+  if (typeof date !== "string") {
+    return false;
+  }
 
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
     return false;
@@ -27,52 +29,113 @@ async function getCurrentUser() {
   return session?.user ?? null;
 }
 
-// GET: Retrieve bookings for the logged-in user.
+async function getDatabase() {
+  const client = await clientPromise;
+  return client.db("wanderlust");
+}
+
+function serializeDocument(document: any) {
+  if (!document) {
+    return null;
+  }
+
+  return {
+    ...document,
+    _id: document._id?.toString(),
+  };
+}
+
+// GET: Fetch logged-in user's bookings with complete user and destination data.
 export async function GET() {
   try {
-    const user = await getCurrentUser();
+    const currentUser = await getCurrentUser();
 
-    if (!user) {
+    if (!currentUser) {
       return NextResponse.json(
-        { message: "Please log in first." },
+        { success: false, message: "Please log in first." },
         { status: 401 },
       );
     }
 
-    const client = await clientPromise;
-    const db = client.db("wanderlust");
+    const db = await getDatabase();
+
+    const user = {
+      userId: currentUser.id,
+      name: currentUser.name ?? "",
+      email: currentUser.email ?? "",
+      image: currentUser.image ?? null,
+      emailVerified: currentUser.emailVerified ?? false,
+      createdAt: currentUser.createdAt ?? null,
+      updatedAt: currentUser.updatedAt ?? null,
+    };
 
     const bookings = await db
       .collection("bookings")
-      .find({ userId: user.id })
+      .find({ userId: currentUser.id })
       .sort({ createdAt: -1 })
       .toArray();
 
+    const enrichedBookings = await Promise.all(
+      bookings.map(async (booking) => {
+        const destinationId = String(
+          booking.destinationId ?? booking.destination?.destinationId ?? "",
+        );
+
+        let destination = booking.destination ?? null;
+
+        if (/^[a-fA-F0-9]{24}$/.test(destinationId)) {
+          const destinationDocument = await db
+            .collection("destinations")
+            .findOne({
+              _id: new ObjectId(destinationId),
+            });
+
+          if (destinationDocument) {
+            destination = {
+              ...serializeDocument(destinationDocument),
+              destinationId: destinationDocument._id.toString(),
+            };
+          }
+        }
+
+        return {
+          ...booking,
+          _id: booking._id.toString(),
+          id: booking._id.toString(),
+          user: booking.user ?? user,
+          destination,
+        };
+      }),
+    );
+
     return NextResponse.json({
-      bookings: bookings.map((booking) => ({
-        ...booking,
-        id: booking._id.toString(),
-        _id: booking._id.toString(),
-      })),
+      success: true,
+      bookings: enrichedBookings,
     });
   } catch (error) {
     console.error("Fetch bookings error:", error);
 
     return NextResponse.json(
-      { message: "Failed to fetch bookings." },
+      {
+        success: false,
+        message: "Failed to fetch bookings.",
+      },
       { status: 500 },
     );
   }
 }
 
-// POST: Create a booking.
+// POST: Save a booking with complete user and destination information.
 export async function POST(request: Request) {
   try {
-    const user = await getCurrentUser();
+    const currentUser = await getCurrentUser();
 
-    if (!user) {
+    if (!currentUser) {
       return NextResponse.json(
-        { message: "Please log in to book a destination." },
+        {
+          success: false,
+          message: "Please log in to book a destination.",
+        },
         { status: 401 },
       );
     }
@@ -86,7 +149,7 @@ export async function POST(request: Request) {
       body = await request.json();
     } catch {
       return NextResponse.json(
-        { message: "Invalid request body." },
+        { success: false, message: "Invalid request body." },
         { status: 400 },
       );
     }
@@ -95,61 +158,92 @@ export async function POST(request: Request) {
 
     if (
       typeof destinationId !== "string" ||
-      !ObjectId.isValid(destinationId) ||
-      new ObjectId(destinationId).toString() !== destinationId.toLowerCase()
+      !/^[a-fA-F0-9]{24}$/.test(destinationId)
     ) {
       return NextResponse.json(
-        { message: "Invalid destination ID." },
+        { success: false, message: "Invalid destination ID." },
         { status: 400 },
       );
     }
 
     if (!isValidDate(departure)) {
       return NextResponse.json(
-        { message: "Invalid departure date. Please select a valid date." },
+        {
+          success: false,
+          message: "Invalid departure date. Please select a valid date.",
+        },
         { status: 400 },
       );
     }
 
-    const client = await clientPromise;
-    const db = client.db("wanderlust");
+    const normalizedDestinationId = destinationId.toLowerCase();
+    const db = await getDatabase();
 
-    const destination = await db.collection("destinations").findOne({
-      _id: new ObjectId(destinationId),
+    const destinationDocument = await db.collection("destinations").findOne({
+      _id: new ObjectId(normalizedDestinationId),
     });
 
-    if (!destination) {
+    if (!destinationDocument) {
       return NextResponse.json(
-        { message: "Destination not found." },
+        { success: false, message: "Destination not found." },
         { status: 404 },
       );
     }
 
     const duplicate = await db.collection("bookings").findOne({
-      userId: user.id,
-      destinationId,
+      userId: currentUser.id,
+      destinationId: normalizedDestinationId,
       status: { $ne: "Cancelled" },
     });
 
     if (duplicate) {
       return NextResponse.json(
-        { message: "You have already booked this destination." },
+        {
+          success: false,
+          message: "You have already booked this destination.",
+        },
         { status: 409 },
       );
     }
 
+    const now = new Date();
+
+    // Authenticated user information from Better Auth.
+    const user = {
+      userId: currentUser.id,
+      name: currentUser.name ?? "",
+      email: currentUser.email ?? "",
+      image: currentUser.image ?? null,
+      emailVerified: currentUser.emailVerified ?? false,
+      createdAt: currentUser.createdAt ?? null,
+      updatedAt: currentUser.updatedAt ?? null,
+    };
+
+    // Complete destination document from MongoDB.
+    const destination = {
+      ...serializeDocument(destinationDocument),
+      destinationId: destinationDocument._id.toString(),
+    };
+
     const booking = {
-      userId: user.id,
-      email: user.email,
-      destinationId,
-      title: String(destination.destinationName ?? "Untitled Destination"),
-      image: String(destination.imageUrl ?? ""),
+      userId: currentUser.id,
+      email: currentUser.email ?? "",
+      destinationId: normalizedDestinationId,
+
+      user,
+      destination,
+
+      title: String(
+        destinationDocument.destinationName ?? "Untitled Destination",
+      ),
+      image: String(destinationDocument.imageUrl ?? ""),
       departure,
       bookingId: `WB-${Date.now()}-${new ObjectId().toString().slice(-6)}`,
-      price: Number(destination.price ?? 0),
-      status: "Pending" as const,
-      createdAt: new Date(),
-      updatedAt: new Date(),
+      price: Number(destinationDocument.price ?? 0),
+      status: "Pending",
+
+      createdAt: now,
+      updatedAt: now,
     };
 
     const result = await db.collection("bookings").insertOne(booking);
@@ -160,8 +254,8 @@ export async function POST(request: Request) {
         message: "Booking saved successfully!",
         booking: {
           ...booking,
-          id: result.insertedId.toString(),
           _id: result.insertedId.toString(),
+          id: result.insertedId.toString(),
         },
       },
       { status: 201 },
@@ -170,7 +264,10 @@ export async function POST(request: Request) {
     console.error("Create booking error:", error);
 
     return NextResponse.json(
-      { message: "Failed to create booking. Please try again." },
+      {
+        success: false,
+        message: "Failed to create booking. Please try again.",
+      },
       { status: 500 },
     );
   }

@@ -16,6 +16,8 @@ import {
   X,
   AlertTriangle,
   MapPin,
+  CalendarDays,
+  Clock3,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -31,6 +33,8 @@ type Destination = {
   imageUrl: string;
   description: string;
   rating?: number;
+  createdAt?: string | Date;
+  updatedAt?: string | Date;
 };
 
 type DestinationFormData = {
@@ -87,7 +91,7 @@ function createFormData(destination: Destination): DestinationFormData {
     price: String(destination.price ?? ""),
     duration: destination.duration ?? "",
     departureDate: destination.departureDate
-      ? destination.departureDate.slice(0, 10)
+      ? String(destination.departureDate).slice(0, 10)
       : "",
     imageUrl: destination.imageUrl ?? "",
     description: destination.description ?? "",
@@ -95,12 +99,32 @@ function createFormData(destination: Destination): DestinationFormData {
 }
 
 function getTodayDate() {
-  const today = new Date();
+  const now = new Date();
 
-  return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(
     2,
     "0",
-  )}-${String(today.getDate()).padStart(2, "0")}`;
+  )}-${String(now.getDate()).padStart(2, "0")}`;
+}
+
+function formatDateTime(value?: string | Date) {
+  if (!value) return "Not available";
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return "Not available";
+  }
+
+  return new Intl.DateTimeFormat("en-BD", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: true,
+    timeZone: "Asia/Dhaka",
+  }).format(date);
 }
 
 export default function DestinationDetailsClient({ id }: { id: string }) {
@@ -160,7 +184,9 @@ export default function DestinationDetailsClient({ id }: { id: string }) {
           setDestination(item);
           setFormData(createFormData(item));
 
-          const destinationDate = item.departureDate?.slice(0, 10) ?? "";
+          const destinationDate = item.departureDate
+            ? String(item.departureDate).slice(0, 10)
+            : "";
 
           setSelectedDate(
             destinationDate && destinationDate >= getTodayDate()
@@ -342,8 +368,7 @@ export default function DestinationDetailsClient({ id }: { id: string }) {
     const previousDestination = destination;
     const previousFormData = formData;
 
-    const optimisticDestination: Destination = {
-      ...destination,
+    const updatePayload = {
       destinationName: formData.destinationName.trim(),
       country: formData.country.trim(),
       category: formData.category.trim(),
@@ -354,8 +379,6 @@ export default function DestinationDetailsClient({ id }: { id: string }) {
       description: formData.description.trim(),
     };
 
-    setDestination(optimisticDestination);
-    setIsEditOpen(false);
     setSaving(true);
     setError("");
     setSuccess("");
@@ -369,31 +392,35 @@ export default function DestinationDetailsClient({ id }: { id: string }) {
             "Content-Type": "application/json",
             Accept: "application/json",
           },
-          body: JSON.stringify({
-            ...optimisticDestination,
-            _id: undefined,
-          }),
+          body: JSON.stringify(updatePayload),
         },
       );
 
       const data = await readApiResponse(response);
+
       const apiDestination: Partial<Destination> = data.destination ?? data;
 
       const updatedDestination: Destination = {
-        ...optimisticDestination,
+        ...previousDestination,
         ...apiDestination,
+        ...updatePayload,
         _id: apiDestination._id ?? previousDestination._id,
+        createdAt: apiDestination.createdAt ?? previousDestination.createdAt,
+        updatedAt: apiDestination.updatedAt,
       };
 
       setDestination(updatedDestination);
       setFormData(createFormData(updatedDestination));
+      setIsEditOpen(false);
 
-      const oldDepartureDate =
-        previousDestination.departureDate?.slice(0, 10) ?? "";
+      const oldDepartureDate = previousDestination.departureDate
+        ? String(previousDestination.departureDate).slice(0, 10)
+        : "";
 
       if (selectedDate === oldDepartureDate) {
-        const updatedDate =
-          updatedDestination.departureDate?.slice(0, 10) ?? "";
+        const updatedDate = updatedDestination.departureDate
+          ? String(updatedDestination.departureDate).slice(0, 10)
+          : "";
 
         setSelectedDate(
           updatedDate && updatedDate >= getTodayDate() ? updatedDate : "",
@@ -405,7 +432,6 @@ export default function DestinationDetailsClient({ id }: { id: string }) {
     } catch (err) {
       setDestination(previousDestination);
       setFormData(previousFormData);
-      setIsEditOpen(true);
 
       const message =
         err instanceof Error ? err.message : "Failed to update destination.";
@@ -510,6 +536,7 @@ export default function DestinationDetailsClient({ id }: { id: string }) {
           },
         }}
       />
+
       <div className="mx-auto w-full max-w-6xl px-3 pb-6 pt-24 sm:px-6 sm:pb-8 sm:pt-32 md:pt-36 lg:px-8 lg:pt-40">
         <div className="relative mb-5 overflow-hidden rounded-xl bg-gray-100 sm:mb-6">
           <div className="absolute left-2 top-2 z-10 sm:left-4 sm:top-4">
@@ -626,10 +653,34 @@ export default function DestinationDetailsClient({ id }: { id: string }) {
                   </span>
                   <span className="text-gray-400">(1234 reviews)</span>
                 </div>
+
                 <span className="hidden text-gray-300 sm:inline">•</span>
+
                 <span className="break-words font-medium text-gray-700">
                   {destination.duration || "7 Days / 6 Nights"}
                 </span>
+              </div>
+
+              <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4">
+                <div className="flex min-w-0 items-start gap-3 rounded-lg border border-gray-100 bg-gray-50 p-3">
+                  <CalendarDays className="mt-0.5 h-4 w-4 shrink-0 text-[#15A1BF]" />
+                  <div className="min-w-0">
+                    <p className="text-xs text-gray-500">Created at</p>
+                    <p className="mt-1 break-words text-sm font-medium text-gray-800">
+                      {formatDateTime(destination.createdAt)}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex min-w-0 items-start gap-3 rounded-lg border border-gray-100 bg-gray-50 p-3">
+                  <Clock3 className="mt-0.5 h-4 w-4 shrink-0 text-[#15A1BF]" />
+                  <div className="min-w-0">
+                    <p className="text-xs text-gray-500">Last updated</p>
+                    <p className="mt-1 break-words text-sm font-medium text-gray-800">
+                      {formatDateTime(destination.updatedAt)}
+                    </p>
+                  </div>
+                </div>
               </div>
 
               <div className="mt-6 sm:mt-8">
@@ -644,6 +695,7 @@ export default function DestinationDetailsClient({ id }: { id: string }) {
                 <h2 className="text-base font-bold text-gray-900">
                   Highlights
                 </h2>
+
                 <p className="mb-4 mt-1 break-words text-sm leading-relaxed text-gray-500">
                   Explore local culture, enjoy beautiful scenery, and create
                   unforgettable travel memories.
@@ -737,6 +789,7 @@ export default function DestinationDetailsClient({ id }: { id: string }) {
                     You have already booked this destination. You can view your
                     booking in My Bookings.
                   </p>
+
                   <Link
                     href="/my-bookings"
                     className="mt-2 inline-flex items-center gap-1 text-sm font-semibold text-green-800 underline underline-offset-2"
@@ -752,10 +805,12 @@ export default function DestinationDetailsClient({ id }: { id: string }) {
                   <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-green-500" />
                   <span>Free cancellation up to 7 days</span>
                 </div>
+
                 <div className="flex items-start gap-2">
                   <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-green-500" />
                   <span>Travel tax &amp; fees included</span>
                 </div>
+
                 <div className="flex items-start gap-2">
                   <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-green-500" />
                   <span>24/7 customer support</span>

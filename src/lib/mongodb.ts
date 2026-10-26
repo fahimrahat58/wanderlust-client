@@ -7,15 +7,23 @@ if (!uri) {
 }
 
 const globalForMongo = globalThis as typeof globalThis & {
+  mongoClient?: MongoClient;
   mongoClientPromise?: Promise<MongoClient>;
 };
 
-const client = new MongoClient(uri);
+export const client = globalForMongo.mongoClient ?? new MongoClient(uri);
 
-const clientPromise = globalForMongo.mongoClientPromise ?? client.connect();
+if (process.env.NODE_ENV !== "production") {
+  globalForMongo.mongoClient = client;
+}
+
+export const clientPromise =
+  globalForMongo.mongoClientPromise ?? client.connect();
 
 if (process.env.NODE_ENV !== "production") {
   globalForMongo.mongoClientPromise = clientPromise;
 }
+
+export const db = client.db("wanderlust");
 
 export default clientPromise;
