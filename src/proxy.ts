@@ -1,14 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "./lib/auth";
 
-const protectedRoutes = ["/profile", "/bookings", "/admin"];
+const protectedRoutes = ["/profile", "/bookings", "/adddestinations"];
 
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   const isProtectedRoute = protectedRoutes.some(
-    (route) =>
-      pathname === route || pathname.startsWith(`${route}/`),
+    (route) => pathname === route || pathname.startsWith(`${route}/`),
   );
 
   const isProtectedDestinationRoute =
@@ -36,7 +35,8 @@ export const config = {
   matcher: [
     "/profile/:path*",
     "/bookings/:path*",
-    "/admin/:path*",
+
+    "/adddestinations",
     "/destinations/:path*",
   ],
 };

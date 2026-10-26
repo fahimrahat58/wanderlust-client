@@ -60,12 +60,14 @@ export default function HeroBanner() {
             <ArrowRight className="h-4 w-4 shrink-0" />
           </Link>
 
-          <button
-            type="button"
-            className="w-full cursor-pointer rounded-sm border border-white/30 bg-white/20 px-7 py-3 text-xs font-normal uppercase tracking-wider text-white backdrop-blur-md transition-all duration-300 hover:bg-white/30 sm:w-auto sm:text-sm"
-          >
-            VIEW DESTINATION
-          </button>
+          <Link href="/destinations">
+            <button
+              type="button"
+              className="w-full cursor-pointer rounded-sm border border-white/30 bg-white/20 px-7 py-3 text-xs font-normal uppercase tracking-wider text-white backdrop-blur-md transition-all duration-300 hover:bg-white/30 sm:w-auto sm:text-sm"
+            >
+              VIEW DESTINATION
+            </button>
+          </Link>
         </div>
       </div>
 

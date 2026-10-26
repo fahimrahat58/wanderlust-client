@@ -1,11 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import type { ChangeEvent, FormEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import toast, { Toaster } from "react-hot-toast";
 import {
   ArrowLeft,
-  Calendar,
   Star,
   Loader2,
   Check,
@@ -41,6 +42,17 @@ type DestinationFormData = {
   departureDate: string;
   imageUrl: string;
   description: string;
+};
+
+type Booking = {
+  id: string;
+  destinationId?: string;
+  title: string;
+  image: string;
+  departure: string;
+  bookingId: string;
+  price: number;
+  status: "Confirmed" | "Pending" | "Cancelled";
 };
 
 const API_URL = "http://localhost:5000";
@@ -82,6 +94,15 @@ function createFormData(destination: Destination): DestinationFormData {
   };
 }
 
+function getTodayDate() {
+  const today = new Date();
+
+  return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(
+    2,
+    "0",
+  )}-${String(today.getDate()).padStart(2, "0")}`;
+}
+
 export default function DestinationDetailsClient({ id }: { id: string }) {
   const router = useRouter();
 
@@ -89,8 +110,13 @@ export default function DestinationDetailsClient({ id }: { id: string }) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [bookingLoading, setBookingLoading] = useState(false);
+  const [checkingBooking, setCheckingBooking] = useState(false);
+
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const [selectedDate, setSelectedDate] = useState("");
+  const [alreadyBooked, setAlreadyBooked] = useState(false);
 
   const [isEditOpen, setIsEditOpen] = useState(false);
   const [isDeleteOpen, setIsDeleteOpen] = useState(false);
@@ -118,9 +144,7 @@ export default function DestinationDetailsClient({ id }: { id: string }) {
           `${API_URL}/destinations/${encodeURIComponent(id)}`,
           {
             method: "GET",
-            headers: {
-              Accept: "application/json",
-            },
+            headers: { Accept: "application/json" },
             cache: "no-store",
           },
         );
@@ -135,6 +159,14 @@ export default function DestinationDetailsClient({ id }: { id: string }) {
         if (!cancelled) {
           setDestination(item);
           setFormData(createFormData(item));
+
+          const destinationDate = item.departureDate?.slice(0, 10) ?? "";
+
+          setSelectedDate(
+            destinationDate && destinationDate >= getTodayDate()
+              ? destinationDate
+              : "",
+          );
         }
       } catch (err) {
         if (!cancelled) {
@@ -143,14 +175,15 @@ export default function DestinationDetailsClient({ id }: { id: string }) {
           );
         }
       } finally {
-        if (!cancelled) {
-          setLoading(false);
-        }
+        if (!cancelled) setLoading(false);
       }
     }
 
     if (id) {
       fetchDestination();
+    } else {
+      setLoading(false);
+      setError("Destination ID is missing.");
     }
 
     return () => {
@@ -158,8 +191,66 @@ export default function DestinationDetailsClient({ id }: { id: string }) {
     };
   }, [id]);
 
+  useEffect(() => {
+    if (!destination?._id) return;
+
+    let cancelled = false;
+
+    async function checkBooking() {
+      setCheckingBooking(true);
+
+      try {
+        const response = await fetch("/api/bookings", {
+          method: "GET",
+          headers: { Accept: "application/json" },
+          cache: "no-store",
+        });
+
+        if (response.status === 401) {
+          if (!cancelled) setAlreadyBooked(false);
+          return;
+        }
+
+        if (!response.ok) {
+          throw new Error("Unable to check your bookings.");
+        }
+
+        const data = await response.json();
+
+        const bookings: Booking[] = Array.isArray(data)
+          ? data
+          : Array.isArray(data.bookings)
+            ? data.bookings
+            : [];
+
+        if (cancelled) return;
+
+        setAlreadyBooked(
+          bookings.some(
+            (booking) =>
+              booking.destinationId === destination._id &&
+              booking.status !== "Cancelled",
+          ),
+        );
+      } catch (err) {
+        if (!cancelled) {
+          console.error("Failed to check bookings:", err);
+          setAlreadyBooked(false);
+        }
+      } finally {
+        if (!cancelled) setCheckingBooking(false);
+      }
+    }
+
+    checkBooking();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [destination?._id]);
+
   const handleInputChange = (
-    event: React.ChangeEvent<
+    event: ChangeEvent<
       HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
     >,
   ) => {
@@ -171,27 +262,98 @@ export default function DestinationDetailsClient({ id }: { id: string }) {
     }));
   };
 
-  const handleUpdate = async (event: React.FormEvent<HTMLFormElement>) => {
+  const handleBooking = async () => {
+    if (!destination || bookingLoading || alreadyBooked) return;
+
+    if (!selectedDate) {
+      toast.error("Please select your departure date.");
+      return;
+    }
+
+    if (selectedDate < getTodayDate()) {
+      toast.error("Please select today or a future date.");
+      return;
+    }
+
+    setBookingLoading(true);
+
+    try {
+      const response = await fetch("/api/bookings", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify({
+          destinationId: destination._id,
+          departure: selectedDate,
+        }),
+      });
+
+      if (response.status === 401) {
+        toast.error("Please log in to book this destination.");
+        router.push("/login");
+        return;
+      }
+
+      if (response.status === 409) {
+        setAlreadyBooked(true);
+        toast.error("You have already booked this destination.");
+        return;
+      }
+
+      const data = await readApiResponse(response);
+
+      setAlreadyBooked(true);
+      toast.success(data.message || "Booking saved successfully!");
+    } catch (err) {
+      toast.error(
+        err instanceof Error
+          ? err.message
+          : "Unable to save your booking. Please try again.",
+      );
+    } finally {
+      setBookingLoading(false);
+    }
+  };
+
+  const handleUpdate = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
     if (!destination || saving || deleting) return;
+
+    if (
+      !formData.destinationName.trim() ||
+      !formData.country.trim() ||
+      !formData.duration.trim() ||
+      !formData.description.trim()
+    ) {
+      toast.error("Please fill in all required fields.");
+      return;
+    }
+
+    const price = Number(formData.price);
+
+    if (formData.price.trim() === "" || !Number.isFinite(price) || price < 0) {
+      toast.error("Please enter a valid price.");
+      return;
+    }
 
     const previousDestination = destination;
     const previousFormData = formData;
 
     const optimisticDestination: Destination = {
       ...destination,
-      destinationName: formData.destinationName,
-      country: formData.country,
-      category: formData.category,
-      price: Number(formData.price),
-      duration: formData.duration,
+      destinationName: formData.destinationName.trim(),
+      country: formData.country.trim(),
+      category: formData.category.trim(),
+      price,
+      duration: formData.duration.trim(),
       departureDate: formData.departureDate,
-      imageUrl: formData.imageUrl,
-      description: formData.description,
+      imageUrl: formData.imageUrl.trim(),
+      description: formData.description.trim(),
     };
 
-    // Update the UI immediately
     setDestination(optimisticDestination);
     setIsEditOpen(false);
     setSaving(true);
@@ -208,8 +370,8 @@ export default function DestinationDetailsClient({ id }: { id: string }) {
             Accept: "application/json",
           },
           body: JSON.stringify({
-            ...formData,
-            price: Number(formData.price),
+            ...optimisticDestination,
+            _id: undefined,
           }),
         },
       );
@@ -225,16 +387,31 @@ export default function DestinationDetailsClient({ id }: { id: string }) {
 
       setDestination(updatedDestination);
       setFormData(createFormData(updatedDestination));
+
+      const oldDepartureDate =
+        previousDestination.departureDate?.slice(0, 10) ?? "";
+
+      if (selectedDate === oldDepartureDate) {
+        const updatedDate =
+          updatedDestination.departureDate?.slice(0, 10) ?? "";
+
+        setSelectedDate(
+          updatedDate && updatedDate >= getTodayDate() ? updatedDate : "",
+        );
+      }
+
       setSuccess("Destination updated successfully.");
+      toast.success("Destination updated successfully.");
     } catch (err) {
-      // Restore original data if the request fails
       setDestination(previousDestination);
       setFormData(previousFormData);
       setIsEditOpen(true);
 
-      setError(
-        err instanceof Error ? err.message : "Failed to update destination.",
-      );
+      const message =
+        err instanceof Error ? err.message : "Failed to update destination.";
+
+      setError(message);
+      toast.error(message);
     } finally {
       setSaving(false);
     }
@@ -251,24 +428,23 @@ export default function DestinationDetailsClient({ id }: { id: string }) {
         `${API_URL}/destinations/${encodeURIComponent(id)}`,
         {
           method: "DELETE",
-          headers: {
-            Accept: "application/json",
-          },
+          headers: { Accept: "application/json" },
         },
       );
 
       await readApiResponse(response);
 
       setIsDeleteOpen(false);
-
-      // Navigate once; no additional refresh call
+      toast.success("Destination deleted successfully.");
       router.replace("/destinations");
     } catch (err) {
       setIsDeleteOpen(false);
 
-      setError(
-        err instanceof Error ? err.message : "Failed to delete destination.",
-      );
+      const message =
+        err instanceof Error ? err.message : "Failed to delete destination.";
+
+      setError(message);
+      toast.error(message);
     } finally {
       setDeleting(false);
     }
@@ -276,9 +452,9 @@ export default function DestinationDetailsClient({ id }: { id: string }) {
 
   if (loading) {
     return (
-      <main className="flex min-h-[70vh] items-center justify-center bg-white px-4">
-        <Loader2 className="h-8 w-8 shrink-0 animate-spin text-[#15A1BF]" />
-        <span className="ml-3 text-sm text-gray-600">
+      <main className="flex min-h-[60vh] items-center justify-center gap-3 bg-white px-4 pt-12 sm:min-h-[70vh]">
+        <Loader2 className="h-7 w-7 shrink-0 animate-spin text-[#15A1BF] sm:h-8 sm:w-8" />
+        <span className="text-center text-sm text-gray-600">
           Loading destination details...
         </span>
       </main>
@@ -287,8 +463,19 @@ export default function DestinationDetailsClient({ id }: { id: string }) {
 
   if (!destination) {
     return (
-      <main className="mx-auto max-w-3xl bg-white px-4 py-10 sm:py-16">
-        <div className="rounded-2xl border border-red-200 bg-red-50 p-5 text-center shadow-sm sm:p-6">
+      <main className="mx-auto w-full max-w-3xl px-3 pb-10 pt-12 sm:px-6 sm:pt-16 lg:px-8 lg:pt-20">
+        <Toaster
+          position="top-right"
+          toastOptions={{
+            duration: 3000,
+            style: {
+              borderRadius: "10px",
+              fontSize: "14px",
+            },
+          }}
+        />
+
+        <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-center shadow-sm sm:p-6">
           <AlertTriangle className="mx-auto mb-3 h-8 w-8 text-red-500" />
 
           <h1 className="text-xl font-bold text-gray-900">
@@ -301,7 +488,7 @@ export default function DestinationDetailsClient({ id }: { id: string }) {
 
           <Link
             href="/destinations"
-            className="mt-5 inline-flex items-center justify-center gap-2 rounded-lg bg-[#15A1BF] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#128ca7]"
+            className="mt-5 inline-flex items-center justify-center gap-2 rounded-lg bg-[#15A1BF] px-4 py-3 text-sm font-semibold text-white transition hover:bg-[#128ca7] sm:px-5"
           >
             <ArrowLeft className="h-4 w-4" />
             Back to destinations
@@ -313,82 +500,17 @@ export default function DestinationDetailsClient({ id }: { id: string }) {
 
   return (
     <main className="min-h-screen overflow-x-clip bg-white pb-10 sm:pb-16">
-      {/* Navbar */}
-      <header className="border-b border-gray-100 bg-white">
-        <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-x-4 gap-y-3 px-4 py-3 sm:px-6 sm:py-4 lg:px-8">
-          <Link
-            href="/"
-            className="shrink-0 text-lg font-bold text-[#15A1BF] sm:text-xl"
-          >
-            Wanderlast
-          </Link>
-
-          <nav className="hidden items-center gap-5 text-xs font-medium text-gray-600 lg:flex xl:gap-8">
-            <Link href="/" className="transition hover:text-[#15A1BF]">
-              Home
-            </Link>
-
-            <Link
-              href="/destinations"
-              className="transition hover:text-[#15A1BF]"
-            >
-              Destinations
-            </Link>
-
-            <Link
-              href="/my-bookings"
-              className="transition hover:text-[#15A1BF]"
-            >
-              My Bookings
-            </Link>
-
-            <Link href="/admin" className="transition hover:text-[#15A1BF]">
-              Admin
-            </Link>
-          </nav>
-
-          <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-2 text-[11px] font-medium text-gray-600 sm:gap-x-5 sm:text-xs lg:gap-x-6">
-            <Link href="/profile" className="transition hover:text-[#15A1BF]">
-              Profile
-            </Link>
-
-            <Link href="/login" className="transition hover:text-[#15A1BF]">
-              Login
-            </Link>
-
-            <Link href="/signup" className="transition hover:text-[#15A1BF]">
-              Sign Up
-            </Link>
-          </div>
-
-          <nav className="flex w-full items-center justify-center gap-x-5 gap-y-2 overflow-x-auto whitespace-nowrap border-t border-gray-100 pt-3 text-xs font-medium text-gray-600 sm:gap-x-8 lg:hidden">
-            <Link href="/" className="transition hover:text-[#15A1BF]">
-              Home
-            </Link>
-
-            <Link
-              href="/destinations"
-              className="transition hover:text-[#15A1BF]"
-            >
-              Destinations
-            </Link>
-
-            <Link
-              href="/my-bookings"
-              className="transition hover:text-[#15A1BF]"
-            >
-              My Bookings
-            </Link>
-
-            <Link href="/admin" className="transition hover:text-[#15A1BF]">
-              Admin
-            </Link>
-          </nav>
-        </div>
-      </header>
-
-      <div className="mx-auto w-full max-w-6xl px-3 py-4 sm:px-6 sm:py-6 lg:px-8">
-        {/* Main Image */}
+      <Toaster
+        position="top-right"
+        toastOptions={{
+          duration: 3000,
+          style: {
+            borderRadius: "10px",
+            fontSize: "14px",
+          },
+        }}
+      />
+      <div className="mx-auto w-full max-w-6xl px-3 pb-6 pt-24 sm:px-6 sm:pb-8 sm:pt-32 md:pt-36 lg:px-8 lg:pt-40">
         <div className="relative mb-5 overflow-hidden rounded-xl bg-gray-100 sm:mb-6">
           <div className="absolute left-2 top-2 z-10 sm:left-4 sm:top-4">
             <Link
@@ -400,7 +522,7 @@ export default function DestinationDetailsClient({ id }: { id: string }) {
             </Link>
           </div>
 
-          <div className="absolute right-2 top-2 z-10 flex items-center gap-1.5 sm:right-4 sm:top-4 sm:gap-2">
+          <div className="absolute right-2 top-2 z-10 flex max-w-[70%] items-center gap-1.5 sm:right-4 sm:top-4 sm:gap-2">
             <button
               type="button"
               disabled={saving || deleting}
@@ -410,9 +532,9 @@ export default function DestinationDetailsClient({ id }: { id: string }) {
                 setFormData(createFormData(destination));
                 setIsEditOpen(true);
               }}
-              className="inline-flex items-center gap-1 rounded-md border border-gray-200 bg-white/95 px-2 py-2 text-[10px] font-medium text-gray-700 shadow-sm backdrop-blur-sm transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-60 sm:px-3 sm:text-xs"
+              className="inline-flex min-w-0 items-center justify-center gap-1 rounded-md border border-gray-200 bg-white/95 px-2 py-2 text-[10px] font-medium text-gray-700 shadow-sm backdrop-blur-sm transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-60 sm:px-3 sm:text-xs"
             >
-              <Pencil className="h-3 w-3 text-gray-500" />
+              <Pencil className="h-3 w-3 shrink-0 text-gray-500" />
               Edit
             </button>
 
@@ -423,15 +545,14 @@ export default function DestinationDetailsClient({ id }: { id: string }) {
                 setError("");
                 setIsDeleteOpen(true);
               }}
-              className="inline-flex items-center gap-1 rounded-md border border-gray-200 bg-white/95 px-2 py-2 text-[10px] font-medium text-red-600 shadow-sm backdrop-blur-sm transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-60 sm:px-3 sm:text-xs"
+              className="inline-flex min-w-0 items-center justify-center gap-1 rounded-md border border-gray-200 bg-white/95 px-2 py-2 text-[10px] font-medium text-red-600 shadow-sm backdrop-blur-sm transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-60 sm:px-3 sm:text-xs"
             >
-              <Trash2 className="h-3 w-3 text-red-500" />
+              <Trash2 className="h-3 w-3 shrink-0 text-red-500" />
               Delete
             </button>
           </div>
 
-          {/* Banner Image */}
-          <div className="h-64 w-full sm:h-80 md:h-[400px] lg:h-[440px]">
+          <div className="h-56 w-full sm:h-72 md:h-[400px] lg:h-[440px]">
             {destination.imageUrl ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img
@@ -447,16 +568,13 @@ export default function DestinationDetailsClient({ id }: { id: string }) {
           </div>
         </div>
 
-        {/* Error Message */}
         {error && (
           <div
             role="alert"
             className="mb-5 flex min-w-0 items-start gap-3 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700 sm:p-4"
           >
             <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
-
             <p className="min-w-0 flex-1 break-words">{error}</p>
-
             <button
               type="button"
               onClick={() => setError("")}
@@ -468,16 +586,13 @@ export default function DestinationDetailsClient({ id }: { id: string }) {
           </div>
         )}
 
-        {/* Success Message */}
         {success && (
           <div
             role="status"
             className="mb-5 flex min-w-0 items-start gap-3 rounded-xl border border-green-200 bg-green-50 p-3 text-sm text-green-700 sm:p-4"
           >
             <Check className="h-5 w-5 shrink-0" />
-
             <p className="min-w-0 flex-1 break-words">{success}</p>
-
             <button
               type="button"
               onClick={() => setSuccess("")}
@@ -489,16 +604,13 @@ export default function DestinationDetailsClient({ id }: { id: string }) {
           </div>
         )}
 
-        {/* Destination Content */}
-        <div className="mt-5 rounded-xl border border-dashed border-cyan-300 p-4 sm:mt-6 sm:p-6 md:p-8">
-          <div className="grid min-w-0 items-start gap-7 lg:grid-cols-[minmax(0,1.8fr)_minmax(260px,1fr)] lg:gap-8">
-            {/* Left Content */}
+        <section className="mt-5 rounded-xl border border-dashed border-cyan-300 p-3 sm:mt-6 sm:p-5 md:p-8">
+          <div className="grid min-w-0 items-start gap-6 md:gap-8 lg:grid-cols-[minmax(0,1.8fr)_minmax(260px,1fr)]">
             <div className="min-w-0">
               <h1 className="break-words text-2xl font-bold tracking-tight text-gray-900 sm:text-3xl md:text-4xl">
                 {destination.destinationName}
               </h1>
 
-              {/* Country Name */}
               <div className="mt-2 flex min-w-0 items-center gap-1.5 text-sm text-gray-500">
                 <MapPin className="h-4 w-4 shrink-0 text-[#15A1BF]" />
                 <span className="break-words">
@@ -506,8 +618,7 @@ export default function DestinationDetailsClient({ id }: { id: string }) {
                 </span>
               </div>
 
-              {/* Rating & Duration */}
-              <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2 text-xs text-gray-500">
+              <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2 text-xs text-gray-500 sm:text-sm">
                 <div className="flex flex-wrap items-center gap-1">
                   <Star className="h-3.5 w-3.5 shrink-0 fill-emerald-500 text-emerald-500" />
                   <span className="font-bold text-emerald-600">
@@ -515,114 +626,136 @@ export default function DestinationDetailsClient({ id }: { id: string }) {
                   </span>
                   <span className="text-gray-400">(1234 reviews)</span>
                 </div>
-
                 <span className="hidden text-gray-300 sm:inline">•</span>
-
                 <span className="break-words font-medium text-gray-700">
                   {destination.duration || "7 Days / 6 Nights"}
                 </span>
               </div>
 
-              {/* Overview */}
               <div className="mt-6 sm:mt-8">
                 <h2 className="text-base font-bold text-gray-900">Overview</h2>
-
-                <p className="mt-2 break-words text-xs leading-relaxed text-gray-500 sm:text-sm">
+                <p className="mt-2 break-words text-sm leading-relaxed text-gray-500">
                   {destination.description ||
-                    "Discover the magic of Bali with pristine beaches, ancient temples, and vibrant culture. Experience luxury resorts, tropical landscapes, and unforgettable sunsets."}
+                    "Discover the magic of this destination and experience unforgettable landscapes, local culture, and beautiful views."}
                 </p>
               </div>
 
-              {/* Highlights */}
               <div className="mt-6 sm:mt-8">
                 <h2 className="text-base font-bold text-gray-900">
                   Highlights
                 </h2>
-
-                <p className="mb-4 mt-1 break-words text-xs leading-relaxed text-gray-500 sm:text-sm">
-                  Discover the magic of Bali with pristine beaches, ancient
-                  temples, and vibrant culture. Experience luxury resorts,
-                  tropical landscapes, and unforgettable sunsets.
+                <p className="mb-4 mt-1 break-words text-sm leading-relaxed text-gray-500">
+                  Explore local culture, enjoy beautiful scenery, and create
+                  unforgettable travel memories.
                 </p>
 
-                <div className="grid grid-cols-1 gap-x-6 gap-y-3 text-xs text-gray-600 sm:grid-cols-2 sm:text-sm">
-                  <div className="flex min-w-0 items-start gap-2">
-                    <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#15A1BF]" />
-                    <span>Luxury beachfront accommodation</span>
-                  </div>
-
-                  <div className="flex min-w-0 items-start gap-2">
-                    <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#15A1BF]" />
-                    <span>Wi-Fi and in Tropical &amp; cultural</span>
-                  </div>
-
-                  <div className="flex min-w-0 items-start gap-2">
-                    <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#15A1BF]" />
-                    <span>Find luxury Bali massage treatment</span>
-                  </div>
-
-                  <div className="flex min-w-0 items-start gap-2">
-                    <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#15A1BF]" />
-                    <span>Private beach dinner experience</span>
-                  </div>
-
-                  <div className="flex min-w-0 items-start gap-2">
-                    <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#15A1BF]" />
-                    <span>Sunrise trek to Mount Batur</span>
-                  </div>
+                <div className="grid grid-cols-1 gap-x-6 gap-y-3 text-sm text-gray-600 sm:grid-cols-2">
+                  {[
+                    "Comfortable accommodation",
+                    "Local sightseeing experience",
+                    "Discover local culture",
+                    "Beautiful scenic locations",
+                    "Memorable travel experience",
+                  ].map((highlight) => (
+                    <div
+                      key={highlight}
+                      className="flex min-w-0 items-start gap-2"
+                    >
+                      <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#15A1BF]" />
+                      <span className="break-words">{highlight}</span>
+                    </div>
+                  ))}
                 </div>
               </div>
             </div>
 
-            {/* Right Price Card */}
-            <aside className="min-w-0 rounded-xl border border-gray-100 bg-gray-50/50 p-4 sm:p-5">
-              <p className="text-[11px] text-gray-400">Starting from</p>
+            <aside className="min-w-0 w-full rounded-xl border border-gray-100 bg-gray-50/50 p-4 sm:p-5">
+              <p className="text-xs text-gray-400">Starting from</p>
 
               <div className="mt-1 flex flex-wrap items-baseline gap-x-1 gap-y-1">
                 <span className="break-words text-2xl font-bold text-[#15A1BF] sm:text-3xl">
-                  ${Number(destination.price || 1299).toLocaleString("en-US")}
+                  ${Number(destination.price ?? 0).toLocaleString("en-US")}
                 </span>
-
-                <span className="text-[10px] text-gray-400">per person</span>
+                <span className="text-xs text-gray-400">per person</span>
               </div>
 
-              {/* Date */}
               <div className="mt-5">
-                <div className="relative rounded-md border border-gray-200 bg-white px-3 py-3 pr-10">
-                  <span className="block break-words text-xs text-gray-500">
-                    {destination.departureDate
-                      ? destination.departureDate.slice(0, 10)
-                      : "05/18/2028"}
-                  </span>
+                <label
+                  htmlFor="booking-date"
+                  className="mb-2 block text-sm font-medium text-gray-700"
+                >
+                  Select Departure Date
+                </label>
 
-                  <Calendar className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
-                </div>
+                <input
+                  id="booking-date"
+                  type="date"
+                  value={selectedDate}
+                  min={getTodayDate()}
+                  onChange={(event) => setSelectedDate(event.target.value)}
+                  className="w-full min-w-0 rounded-md border border-gray-200 bg-white px-3 py-3 text-sm text-gray-700 outline-none focus:border-[#15A1BF] focus:ring-2 focus:ring-cyan-100"
+                />
               </div>
 
-              {/* Book Now */}
               <Button
                 type="button"
-                className="mt-4 w-full gap-2 rounded-md bg-[#15A1BF] py-3 text-xs font-medium text-white hover:bg-[#1188a3]"
-                onClick={() => {
-                  setSuccess("Booking functionality will be added soon.");
-                }}
+                disabled={
+                  bookingLoading ||
+                  checkingBooking ||
+                  alreadyBooked ||
+                  !selectedDate
+                }
+                onClick={handleBooking}
+                className="mt-4 w-full gap-2 rounded-md bg-[#15A1BF] py-3 text-sm font-medium text-white hover:bg-[#1188a3] disabled:cursor-not-allowed disabled:opacity-60"
               >
-                Book Now
-                <ArrowRight className="h-3.5 w-3.5" />
+                {bookingLoading ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Booking...
+                  </>
+                ) : checkingBooking ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Checking booking...
+                  </>
+                ) : alreadyBooked ? (
+                  <>
+                    <Check className="h-4 w-4" />
+                    Already Booked
+                  </>
+                ) : (
+                  <>
+                    Book Now
+                    <ArrowRight className="h-4 w-4" />
+                  </>
+                )}
               </Button>
 
-              {/* Perks */}
-              <div className="mt-5 space-y-3 text-[11px] leading-relaxed text-gray-500 sm:text-xs">
+              {alreadyBooked && (
+                <div className="mt-3 rounded-lg border border-green-200 bg-green-50 p-3">
+                  <p className="text-sm leading-relaxed text-green-700">
+                    You have already booked this destination. You can view your
+                    booking in My Bookings.
+                  </p>
+                  <Link
+                    href="/my-bookings"
+                    className="mt-2 inline-flex items-center gap-1 text-sm font-semibold text-green-800 underline underline-offset-2"
+                  >
+                    View My Bookings
+                    <ArrowRight className="h-3.5 w-3.5" />
+                  </Link>
+                </div>
+              )}
+
+              <div className="mt-5 space-y-3 text-xs leading-relaxed text-gray-500 sm:text-sm">
                 <div className="flex items-start gap-2">
                   <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-green-500" />
                   <span>Free cancellation up to 7 days</span>
                 </div>
-
                 <div className="flex items-start gap-2">
                   <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-green-500" />
                   <span>Travel tax &amp; fees included</span>
                 </div>
-
                 <div className="flex items-start gap-2">
                   <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-green-500" />
                   <span>24/7 customer support</span>
@@ -630,27 +763,25 @@ export default function DestinationDetailsClient({ id }: { id: string }) {
               </div>
             </aside>
           </div>
-        </div>
+        </section>
       </div>
 
-      {/* Edit Form Modal */}
       {isEditOpen && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/50 p-3 sm:p-4"
+          className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/50 p-2 sm:p-4"
           onMouseDown={(event) => {
             if (event.target === event.currentTarget && !saving) {
               setIsEditOpen(false);
             }
           }}
         >
-          <div className="my-auto max-h-[92dvh] w-full max-w-2xl overflow-y-auto overscroll-contain rounded-xl bg-white p-4 shadow-xl sm:rounded-2xl sm:p-6 md:p-7">
+          <div className="my-auto max-h-[calc(100dvh-1rem)] w-full max-w-2xl overflow-y-auto overscroll-contain rounded-xl bg-white p-4 shadow-xl sm:max-h-[92dvh] sm:rounded-2xl sm:p-6 md:p-7">
             <div className="mb-5 flex items-start justify-between gap-3 sm:mb-6">
               <div className="min-w-0">
                 <h2 className="text-lg font-bold text-gray-900 sm:text-xl">
                   Edit destination
                 </h2>
-
-                <p className="mt-1 text-xs leading-relaxed text-gray-500 sm:text-sm">
+                <p className="mt-1 text-sm leading-relaxed text-gray-500">
                   Update destination information.
                 </p>
               </div>
@@ -705,6 +836,7 @@ export default function DestinationDetailsClient({ id }: { id: string }) {
                   <input
                     required
                     min="0"
+                    step="any"
                     type="number"
                     name="price"
                     value={formData.price}
@@ -798,7 +930,6 @@ export default function DestinationDetailsClient({ id }: { id: string }) {
         </div>
       )}
 
-      {/* Delete Confirmation Modal */}
       {isDeleteOpen && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/50 p-3 sm:p-4"
@@ -808,7 +939,7 @@ export default function DestinationDetailsClient({ id }: { id: string }) {
             }
           }}
         >
-          <div className="my-auto w-full max-w-md rounded-xl bg-white p-5 shadow-xl sm:rounded-2xl sm:p-7">
+          <div className="my-auto w-full max-w-md rounded-xl bg-white p-4 shadow-xl sm:rounded-2xl sm:p-7">
             <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-red-100 text-red-600 sm:h-14 sm:w-14">
               <Trash2 className="h-6 w-6 sm:h-7 sm:w-7" />
             </div>

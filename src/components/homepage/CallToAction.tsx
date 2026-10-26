@@ -1,4 +1,5 @@
 import React from "react";
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { ArrowRight } from "lucide-react";
 
@@ -30,10 +31,12 @@ export default function CallToAction() {
 
         {/* CTA Button */}
         <div className="flex justify-center pt-3 sm:pt-4">
-          <Button className="h-auto min-h-12 w-full max-w-xs cursor-pointer gap-2 rounded-none bg-white px-4 py-4 text-[10px] font-semibold uppercase tracking-wider text-slate-900 shadow-lg transition-all duration-200 hover:bg-slate-100 sm:w-auto sm:max-w-none sm:gap-3 sm:px-8 sm:py-6 sm:text-xs">
-            <span>BOOK YOUR TRIP TODAY</span>
-            <ArrowRight className="h-4 w-4 shrink-0 text-slate-800" />
-          </Button>
+          <Link href="/destinations">
+            <Button className="h-auto min-h-12 w-full max-w-xs cursor-pointer gap-2 rounded-none bg-white px-4 py-4 text-[10px] font-semibold uppercase tracking-wider text-slate-900 shadow-lg transition-all duration-200 hover:bg-slate-100 sm:w-auto sm:max-w-none sm:gap-3 sm:px-8 sm:py-6 sm:text-xs">
+              <span>BOOK YOUR TRIP TODAY</span>
+              <ArrowRight className="h-4 w-4 shrink-0 text-slate-800" />
+            </Button>
+          </Link>
         </div>
       </div>
     </section>
