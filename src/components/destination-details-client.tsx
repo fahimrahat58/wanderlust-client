@@ -137,6 +137,9 @@ export default function DestinationDetailsClient({ id }: { id: string }) {
   const [bookingLoading, setBookingLoading] = useState(false);
   const [checkingBooking, setCheckingBooking] = useState(false);
 
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [checkingAdmin, setCheckingAdmin] = useState(true);
+
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [selectedDate, setSelectedDate] = useState("");
@@ -156,6 +159,54 @@ export default function DestinationDetailsClient({ id }: { id: string }) {
     description: "",
   });
 
+  // Check whether the current authenticated user is an admin.
+  useEffect(() => {
+    let cancelled = false;
+
+    async function checkAdmin() {
+      setCheckingAdmin(true);
+      setIsAdmin(false);
+
+      try {
+        const response = await fetch(`${API_URL}/users/me`, {
+          method: "GET",
+          headers: {
+            Accept: "application/json",
+          },
+          credentials: "include",
+          cache: "no-store",
+        });
+
+        if (!response.ok) {
+          return;
+        }
+
+        const user = await response.json();
+
+        if (!cancelled) {
+          setIsAdmin(user?.role === "admin");
+        }
+      } catch (err) {
+        console.error("Failed to verify admin:", err);
+
+        if (!cancelled) {
+          setIsAdmin(false);
+        }
+      } finally {
+        if (!cancelled) {
+          setCheckingAdmin(false);
+        }
+      }
+    }
+
+    checkAdmin();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Fetch destination details.
   useEffect(() => {
     let cancelled = false;
 
@@ -168,7 +219,9 @@ export default function DestinationDetailsClient({ id }: { id: string }) {
           `${API_URL}/destinations/${encodeURIComponent(id)}`,
           {
             method: "GET",
-            headers: { Accept: "application/json" },
+            headers: {
+              Accept: "application/json",
+            },
             cache: "no-store",
           },
         );
@@ -201,7 +254,9 @@ export default function DestinationDetailsClient({ id }: { id: string }) {
           );
         }
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) {
+          setLoading(false);
+        }
       }
     }
 
@@ -217,6 +272,7 @@ export default function DestinationDetailsClient({ id }: { id: string }) {
     };
   }, [id]);
 
+  // Check whether the user has already booked this destination.
   useEffect(() => {
     if (!destination?._id) return;
 
@@ -228,12 +284,16 @@ export default function DestinationDetailsClient({ id }: { id: string }) {
       try {
         const response = await fetch("/api/bookings", {
           method: "GET",
-          headers: { Accept: "application/json" },
+          headers: {
+            Accept: "application/json",
+          },
           cache: "no-store",
         });
 
         if (response.status === 401) {
-          if (!cancelled) setAlreadyBooked(false);
+          if (!cancelled) {
+            setAlreadyBooked(false);
+          }
           return;
         }
 
@@ -254,7 +314,7 @@ export default function DestinationDetailsClient({ id }: { id: string }) {
         setAlreadyBooked(
           bookings.some(
             (booking) =>
-              booking.destinationId === destination._id &&
+              booking.destinationId === destination?._id &&
               booking.status !== "Cancelled",
           ),
         );
@@ -264,7 +324,9 @@ export default function DestinationDetailsClient({ id }: { id: string }) {
           setAlreadyBooked(false);
         }
       } finally {
-        if (!cancelled) setCheckingBooking(false);
+        if (!cancelled) {
+          setCheckingBooking(false);
+        }
       }
     }
 
@@ -346,6 +408,11 @@ export default function DestinationDetailsClient({ id }: { id: string }) {
   const handleUpdate = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
+    if (!isAdmin) {
+      toast.error("Admin permission is required.");
+      return;
+    }
+
     if (!destination || saving || deleting) return;
 
     if (
@@ -388,6 +455,7 @@ export default function DestinationDetailsClient({ id }: { id: string }) {
         `${API_URL}/destinations/${encodeURIComponent(id)}`,
         {
           method: "PATCH",
+          credentials: "include",
           headers: {
             "Content-Type": "application/json",
             Accept: "application/json",
@@ -397,7 +465,6 @@ export default function DestinationDetailsClient({ id }: { id: string }) {
       );
 
       const data = await readApiResponse(response);
-
       const apiDestination: Partial<Destination> = data.destination ?? data;
 
       const updatedDestination: Destination = {
@@ -444,6 +511,11 @@ export default function DestinationDetailsClient({ id }: { id: string }) {
   };
 
   const handleDelete = async () => {
+    if (!isAdmin) {
+      toast.error("Admin permission is required.");
+      return;
+    }
+
     if (!destination || deleting || saving) return;
 
     setDeleting(true);
@@ -454,7 +526,10 @@ export default function DestinationDetailsClient({ id }: { id: string }) {
         `${API_URL}/destinations/${encodeURIComponent(id)}`,
         {
           method: "DELETE",
-          headers: { Accept: "application/json" },
+          credentials: "include",
+          headers: {
+            Accept: "application/json",
+          },
         },
       );
 
@@ -550,33 +625,37 @@ export default function DestinationDetailsClient({ id }: { id: string }) {
           </div>
 
           <div className="absolute right-2 top-2 z-10 flex max-w-[70%] items-center gap-1.5 sm:right-4 sm:top-4 sm:gap-2">
-            <button
-              type="button"
-              disabled={saving || deleting}
-              onClick={() => {
-                setError("");
-                setSuccess("");
-                setFormData(createFormData(destination));
-                setIsEditOpen(true);
-              }}
-              className="inline-flex min-w-0 items-center justify-center gap-1 rounded-md border border-gray-200 bg-white/95 px-2 py-2 text-[10px] font-medium text-gray-700 shadow-sm backdrop-blur-sm transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-60 sm:px-3 sm:text-xs"
-            >
-              <Pencil className="h-3 w-3 shrink-0 text-gray-500" />
-              Edit
-            </button>
+            {!checkingAdmin && isAdmin && (
+              <>
+                <button
+                  type="button"
+                  disabled={saving || deleting}
+                  onClick={() => {
+                    setError("");
+                    setSuccess("");
+                    setFormData(createFormData(destination));
+                    setIsEditOpen(true);
+                  }}
+                  className="inline-flex min-w-0 items-center justify-center gap-1 rounded-md border border-gray-200 bg-white/95 px-2 py-2 text-[10px] font-medium text-gray-700 shadow-sm backdrop-blur-sm transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-60 sm:px-3 sm:text-xs"
+                >
+                  <Pencil className="h-3 w-3 shrink-0 text-gray-500" />
+                  Edit
+                </button>
 
-            <button
-              type="button"
-              disabled={saving || deleting}
-              onClick={() => {
-                setError("");
-                setIsDeleteOpen(true);
-              }}
-              className="inline-flex min-w-0 items-center justify-center gap-1 rounded-md border border-gray-200 bg-white/95 px-2 py-2 text-[10px] font-medium text-red-600 shadow-sm backdrop-blur-sm transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-60 sm:px-3 sm:text-xs"
-            >
-              <Trash2 className="h-3 w-3 shrink-0 text-red-500" />
-              Delete
-            </button>
+                <button
+                  type="button"
+                  disabled={saving || deleting}
+                  onClick={() => {
+                    setError("");
+                    setIsDeleteOpen(true);
+                  }}
+                  className="inline-flex min-w-0 items-center justify-center gap-1 rounded-md border border-gray-200 bg-white/95 px-2 py-2 text-[10px] font-medium text-red-600 shadow-sm backdrop-blur-sm transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-60 sm:px-3 sm:text-xs"
+                >
+                  <Trash2 className="h-3 w-3 shrink-0 text-red-500" />
+                  Delete
+                </button>
+              </>
+            )}
           </div>
 
           <div className="h-56 w-full sm:h-72 md:h-[400px] lg:h-[440px]">
@@ -821,7 +900,8 @@ export default function DestinationDetailsClient({ id }: { id: string }) {
         </section>
       </div>
 
-      {isEditOpen && (
+      {/* Edit destination modal */}
+      {isEditOpen && isAdmin && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/50 p-2 sm:p-4"
           onMouseDown={(event) => {
@@ -985,7 +1065,8 @@ export default function DestinationDetailsClient({ id }: { id: string }) {
         </div>
       )}
 
-      {isDeleteOpen && (
+      {/* Delete confirmation modal */}
+      {isDeleteOpen && isAdmin && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/50 p-3 sm:p-4"
           onMouseDown={(event) => {
