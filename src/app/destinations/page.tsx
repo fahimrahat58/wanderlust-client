@@ -148,7 +148,10 @@ export default function AllDestinations() {
           </div>
 
           <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            <Select value={category} onValueChange={setCategory}>
+            <Select
+              value={category}
+              onValueChange={(value) => setCategory(value ?? "all")}
+            >
               <SelectTrigger className="h-11 w-full min-w-0 rounded-xl border-slate-200 bg-slate-50/70 text-xs font-medium text-slate-700 transition hover:bg-white focus:ring-1 focus:ring-[#15A1BF]">
                 <span className="min-w-0 flex-1 truncate text-left">
                   {category === "all" ? "All Categories" : category}
@@ -164,7 +167,10 @@ export default function AllDestinations() {
               </SelectContent>
             </Select>
 
-            <Select value={priceRange} onValueChange={setPriceRange}>
+            <Select
+              value={priceRange}
+              onValueChange={(value) => setPriceRange(value ?? "all")}
+            >
               <SelectTrigger className="h-11 w-full min-w-0 rounded-xl border-slate-200 bg-slate-50/70 text-xs font-medium text-slate-700 transition hover:bg-white focus:ring-1 focus:ring-[#15A1BF]">
                 <span className="min-w-0 flex-1 truncate text-left">
                   {priceRange === "all"
@@ -185,7 +191,10 @@ export default function AllDestinations() {
               </SelectContent>
             </Select>
 
-            <Select value={sortBy} onValueChange={setSortBy}>
+            <Select
+              value={sortBy}
+              onValueChange={(value) => setSortBy(value ?? "default")}
+            >
               <SelectTrigger className="h-11 w-full min-w-0 rounded-xl border-slate-200 bg-slate-50/70 text-xs font-medium text-slate-700 transition hover:bg-white focus:ring-1 focus:ring-[#15A1BF]">
                 <span className="min-w-0 flex-1 truncate text-left">
                   {sortBy === "default"
