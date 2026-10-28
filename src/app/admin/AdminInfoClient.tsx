@@ -15,7 +15,7 @@ import {
 import { authClient } from "@/lib/auth-client";
 
 const API_URL = (
-  process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000"
+  process.env.NEXT_PUBLIC_API_URL ?? ""
 ).replace(/\/$/, "");
 
 type UserInfo = {
@@ -106,7 +106,7 @@ function getArray<T>(data: unknown, key: string): T[] {
   if (Array.isArray(data)) return data as T[];
 
   if (data && typeof data === "object" && key in data) {
-    const value = data[key];
+    const value = (data as Record<string, unknown>)[key];
 
     if (Array.isArray(value)) return value as T[];
   }
