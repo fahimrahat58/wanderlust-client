@@ -13,8 +13,7 @@ import {
   MapPlus,
 } from "lucide-react";
 import { signOut, useSession } from "@/lib/auth-client";
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000";
+import { apiFetch } from "@/lib/api";
 
 const navLinks = [
   { name: "Home", href: "/" },
@@ -23,11 +22,14 @@ const navLinks = [
 ];
 
 type ApiUser = {
+  isAdmin?: boolean;
   role?: string;
   user?: {
+    isAdmin?: boolean;
     role?: string;
   };
   data?: {
+    isAdmin?: boolean;
     role?: string;
   };
 };
@@ -55,11 +57,7 @@ export default function Navbar() {
     setIsCheckingRole(true);
 
     try {
-      const response = await fetch(`${API_URL}/users/me`, {
-        method: "GET",
-        credentials: "include",
-        cache: "no-store",
-      });
+      const response = await apiFetch("/users/me");
 
       if (!response.ok) {
         setIsAdmin(false);
@@ -68,9 +66,15 @@ export default function Navbar() {
 
       const result: ApiUser = await response.json();
 
-      const role = result.user?.role ?? result.data?.role ?? result.role;
+      const role = result.role ?? result.user?.role ?? result.data?.role;
 
-      setIsAdmin(role?.toLowerCase() === "admin");
+      const adminStatus =
+        result.isAdmin === true ||
+        result.user?.isAdmin === true ||
+        result.data?.isAdmin === true ||
+        role?.toLowerCase() === "admin";
+
+      setIsAdmin(adminStatus);
     } catch (error) {
       console.error("Failed to check admin role:", error);
       setIsAdmin(false);
@@ -257,7 +261,7 @@ export default function Navbar() {
                 </Link>
 
                 <Link
-                  href="/add-destination"
+                  href="/adddestinations"
                   onClick={closeMenu}
                   className={`flex items-center gap-2 ${mobileLinkClass}`}
                 >

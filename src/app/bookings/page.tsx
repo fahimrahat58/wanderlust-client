@@ -18,6 +18,8 @@ import {
   AlertTriangle,
 } from "lucide-react";
 
+import { authClient } from "@/lib/auth-client";
+
 import {
   AlertDialog,
   AlertDialogAction,
@@ -28,6 +30,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000";
 
 export type BookingStatus = "Confirmed" | "Pending" | "Cancelled";
 
@@ -40,6 +44,39 @@ export interface Booking {
   bookingId: string;
   price: number;
   status: BookingStatus;
+}
+
+async function getJwtToken(): Promise<string> {
+  const tokenResponse = await authClient.token();
+  const token = tokenResponse.data?.token;
+
+  if (tokenResponse.error || !token) {
+    throw new Error("Your session has expired. Please log in again.");
+  }
+
+  return token;
+}
+
+async function authenticatedFetch(
+  endpoint: string,
+  options: RequestInit = {},
+): Promise<Response> {
+  const token = await getJwtToken();
+
+  const headers = new Headers(options.headers);
+
+  headers.set("Accept", "application/json");
+  headers.set("Authorization", `Bearer ${token}`);
+
+  if (options.body && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
+
+  return fetch(`${API_URL}${endpoint}`, {
+    ...options,
+    headers,
+    cache: "no-store",
+  });
 }
 
 async function readApiResponse(response: Response) {
@@ -127,12 +164,8 @@ export default function BookingsPage() {
       setLoading(true);
       setError("");
 
-      const response = await fetch("/api/bookings", {
+      const response = await authenticatedFetch("/bookings", {
         method: "GET",
-        headers: {
-          Accept: "application/json",
-        },
-        cache: "no-store",
       });
 
       if (response.status === 401) {
@@ -154,16 +187,24 @@ export default function BookingsPage() {
 
       setBookings(normalizedBookings);
     } catch (err) {
-      setError(
-        err instanceof Error ? err.message : "Unable to load your bookings.",
-      );
+      const message =
+        err instanceof Error ? err.message : "Unable to load your bookings.";
+
+      setError(message);
+
+      if (
+        message.toLowerCase().includes("session has expired") ||
+        message.toLowerCase().includes("please log in")
+      ) {
+        router.push("/login");
+      }
     } finally {
       setLoading(false);
     }
   }, [router]);
 
   useEffect(() => {
-    loadBookings();
+    void loadBookings();
   }, [loadBookings]);
 
   const handleCancel = (id: string) => {
@@ -182,15 +223,18 @@ export default function BookingsPage() {
     setIsCancelling(true);
 
     try {
-      const response = await fetch(
-        `/api/bookings/${encodeURIComponent(booking.id)}`,
+      const response = await authenticatedFetch(
+        `/bookings/${encodeURIComponent(booking.id)}`,
         {
           method: "PATCH",
-          headers: {
-            Accept: "application/json",
-          },
+          body: JSON.stringify({ status: "Cancelled" }),
         },
       );
+
+      if (response.status === 401) {
+        router.push("/login");
+        return;
+      }
 
       const data = await readApiResponse(response);
 
@@ -227,15 +271,17 @@ export default function BookingsPage() {
     setRemovingId(booking.id);
 
     try {
-      const response = await fetch(
-        `/api/bookings/${encodeURIComponent(booking.id)}`,
+      const response = await authenticatedFetch(
+        `/bookings/${encodeURIComponent(booking.id)}`,
         {
           method: "DELETE",
-          headers: {
-            Accept: "application/json",
-          },
         },
       );
+
+      if (response.status === 401) {
+        router.push("/login");
+        return;
+      }
 
       const data = await readApiResponse(response);
 
@@ -349,7 +395,7 @@ export default function BookingsPage() {
             {error && (
               <button
                 type="button"
-                onClick={loadBookings}
+                onClick={() => void loadBookings()}
                 className="mx-auto mt-4 block text-sm font-medium text-cyan-700 underline"
               >
                 Try again
@@ -388,7 +434,6 @@ export default function BookingsPage() {
         )}
       </div>
 
-      {/* Booking Details */}
       {selectedBooking && (
         <div
           className="fixed inset-0 z-40 flex items-center justify-center overflow-y-auto bg-black/50 p-4"
@@ -490,7 +535,6 @@ export default function BookingsPage() {
         </div>
       )}
 
-      {/* Cancel Confirmation Dialog */}
       <AlertDialog
         open={!!bookingToCancel}
         onOpenChange={(open) => {

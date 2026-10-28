@@ -12,14 +12,18 @@ import {
   Loader2,
   ShieldCheck,
 } from "lucide-react";
+import { authClient } from "@/lib/auth-client";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000";
+const API_URL = (
+  process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000"
+).replace(/\/$/, "");
 
 type UserInfo = {
   _id: string;
   name?: string;
   email?: string;
   role?: string;
+  isAdmin?: boolean;
   createdAt?: string;
 };
 
@@ -64,6 +68,52 @@ function statusStyle(status?: string) {
   return "bg-amber-50 text-amber-700";
 }
 
+async function readResponse(response: Response) {
+  const text = await response.text();
+
+  if (!text) return {};
+
+  try {
+    return JSON.parse(text);
+  } catch {
+    return { message: text };
+  }
+}
+
+function getErrorMessage(data: unknown, fallback: string) {
+  if (
+    data &&
+    typeof data === "object" &&
+    "message" in data &&
+    typeof data.message === "string"
+  ) {
+    return data.message;
+  }
+
+  if (
+    data &&
+    typeof data === "object" &&
+    "error" in data &&
+    typeof data.error === "string"
+  ) {
+    return data.error;
+  }
+
+  return fallback;
+}
+
+function getArray<T>(data: unknown, key: string): T[] {
+  if (Array.isArray(data)) return data as T[];
+
+  if (data && typeof data === "object" && key in data) {
+    const value = data[key];
+
+    if (Array.isArray(value)) return value as T[];
+  }
+
+  return [];
+}
+
 export default function AdminInfoClient() {
   const [users, setUsers] = useState<UserInfo[]>([]);
   const [bookings, setBookings] = useState<BookingInfo[]>([]);
@@ -76,43 +126,95 @@ export default function AdminInfoClient() {
     setError("");
 
     try {
+      console.log("[Admin Dashboard] Requesting Better Auth JWT...");
+
+      const tokenResponse = await authClient.token();
+      const token = tokenResponse.data?.token;
+
+      if (tokenResponse.error || !token) {
+        console.error(
+          "[Admin Dashboard] JWT unavailable:",
+          tokenResponse.error,
+        );
+
+        throw new Error("JWT token পাওয়া যায়নি। আবার sign in করে চেষ্টা করো।");
+      }
+
+      console.log("[Admin Dashboard] JWT received. Token value hidden.");
+
+      const headers = {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/json",
+      };
+
       const [usersResponse, bookingsResponse] = await Promise.all([
         fetch(`${API_URL}/admin/users`, {
-          credentials: "include",
+          method: "GET",
+          headers,
           cache: "no-store",
         }),
         fetch(`${API_URL}/admin/bookings`, {
-          credentials: "include",
+          method: "GET",
+          headers,
           cache: "no-store",
         }),
       ]);
 
-      if (
-        usersResponse.status === 401 ||
-        usersResponse.status === 403 ||
-        bookingsResponse.status === 401 ||
-        bookingsResponse.status === 403
-      ) {
+      console.log("[Admin Dashboard] Users API status:", usersResponse.status);
+      console.log(
+        "[Admin Dashboard] Bookings API status:",
+        bookingsResponse.status,
+      );
+
+      const [usersData, bookingsData] = await Promise.all([
+        readResponse(usersResponse),
+        readResponse(bookingsResponse),
+      ]);
+
+      if (usersResponse.status === 401 || bookingsResponse.status === 401) {
         throw new Error(
-          "Admin access denied. Please sign in with the admin account.",
+          "Authentication failed (401)। JWT configuration ও backend verification check করো।",
         );
       }
 
-      if (!usersResponse.ok || !bookingsResponse.ok) {
-        throw new Error("Information load kora jayni. Backend API check koro.");
+      if (usersResponse.status === 403 || bookingsResponse.status === 403) {
+        throw new Error(
+          "Access denied (403)। তোমার login করা account-টি admin account কি না এবং backend-এর ADMIN_EMAIL check করো।",
+        );
       }
 
-      const usersData = await usersResponse.json();
-      const bookingsData = await bookingsResponse.json();
+      if (!usersResponse.ok) {
+        throw new Error(
+          getErrorMessage(usersData, "Users information load করা যায়নি।"),
+        );
+      }
 
-      setUsers(Array.isArray(usersData) ? usersData : (usersData.users ?? []));
-      setBookings(
-        Array.isArray(bookingsData)
-          ? bookingsData
-          : (bookingsData.bookings ?? []),
-      );
+      if (!bookingsResponse.ok) {
+        throw new Error(
+          getErrorMessage(bookingsData, "Bookings information load করা যায়নি।"),
+        );
+      }
+
+      const usersList = getArray<UserInfo>(usersData, "users");
+      const bookingsList = getArray<BookingInfo>(bookingsData, "bookings");
+
+      setUsers(usersList);
+      setBookings(bookingsList);
+
+      console.log("[Admin Dashboard] Data loaded successfully.", {
+        users: usersList.length,
+        bookings: bookingsList.length,
+      });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Something went wrong.");
+      const message =
+        err instanceof Error
+          ? err.message
+          : "তথ্য লোড করার সময় অজানা সমস্যা হয়েছে।";
+
+      console.error("[Admin Dashboard] Load failed:", message);
+      setError(message);
+      setUsers([]);
+      setBookings([]);
     } finally {
       setLoading(false);
     }
@@ -147,9 +249,10 @@ export default function AdminInfoClient() {
 
           <div className="flex flex-wrap gap-3">
             <button
+              type="button"
               onClick={() => void loadData()}
               disabled={loading}
-              className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-60"
+              className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
             >
               <RefreshCw size={16} className={loading ? "animate-spin" : ""} />
               Refresh
@@ -174,10 +277,12 @@ export default function AdminInfoClient() {
                   {loading ? "—" : users.length}
                 </p>
               </div>
+
               <div className="rounded-xl bg-cyan-50 p-3 text-[#15A1BF]">
                 <Users size={24} />
               </div>
             </div>
+
             <p className="mt-3 text-xs text-slate-400">Registered accounts</p>
           </div>
 
@@ -189,32 +294,38 @@ export default function AdminInfoClient() {
                   {loading ? "—" : bookings.length}
                 </p>
               </div>
+
               <div className="rounded-xl bg-cyan-50 p-3 text-[#15A1BF]">
                 <CalendarCheck size={24} />
               </div>
             </div>
+
             <p className="mt-3 text-xs text-slate-400">All customer bookings</p>
           </div>
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
           <button
+            type="button"
             onClick={() => setActiveTab("users")}
-            className={`inline-flex items-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold transition ${activeTab === "users"
+            className={`inline-flex items-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold transition ${
+              activeTab === "users"
                 ? "bg-[#15A1BF] text-white"
                 : "border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
-              }`}
+            }`}
           >
             <Users size={17} />
             Users Information
           </button>
 
           <button
+            type="button"
             onClick={() => setActiveTab("bookings")}
-            className={`inline-flex items-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold transition ${activeTab === "bookings"
+            className={`inline-flex items-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold transition ${
+              activeTab === "bookings"
                 ? "bg-[#15A1BF] text-white"
                 : "border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
-              }`}
+            }`}
           >
             <CalendarCheck size={17} />
             Bookings Information
@@ -222,12 +333,23 @@ export default function AdminInfoClient() {
         </div>
 
         {error && (
-          <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
-            <p>{error}</p>
+          <div
+            role="alert"
+            className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700"
+          >
+            <p className="font-medium">{error}</p>
             <p className="mt-1 text-xs">
-              Check that the backend has both admin API routes and that
-              credentials are enabled.
+              Browser console এবং backend terminal-এর status/error log check
+              করো।
             </p>
+            <button
+              type="button"
+              onClick={() => void loadData()}
+              disabled={loading}
+              className="mt-3 rounded-lg border border-red-200 bg-white px-3 py-2 font-semibold hover:bg-red-100 disabled:opacity-60"
+            >
+              Try again
+            </button>
           </div>
         )}
 
@@ -246,6 +368,7 @@ export default function AdminInfoClient() {
                     ? "Users Information"
                     : "Bookings Information"}
                 </h2>
+
                 <p className="mt-1 text-xs text-slate-500">
                   {activeTab === "users"
                     ? `${users.length} registered users`
@@ -276,30 +399,40 @@ export default function AdminInfoClient() {
                       <th className="px-6 py-4 font-semibold">Joined</th>
                     </tr>
                   </thead>
+
                   <tbody className="divide-y divide-slate-100">
-                    {users.map((user) => (
-                      <tr key={user._id} className="hover:bg-slate-50/70">
-                        <td className="px-6 py-4 font-medium text-slate-900">
-                          {user.name || "Unnamed User"}
-                        </td>
-                        <td className="px-6 py-4 text-slate-600">
-                          {user.email || "—"}
-                        </td>
-                        <td className="px-6 py-4">
-                          <span
-                            className={`rounded-full px-3 py-1 text-xs font-semibold ${user.role === "admin"
-                                ? "bg-cyan-50 text-cyan-700"
-                                : "bg-slate-100 text-slate-600"
+                    {users.map((user) => {
+                      const isAdmin =
+                        user.isAdmin === true || user.role === "admin";
+
+                      return (
+                        <tr key={user._id} className="hover:bg-slate-50/70">
+                          <td className="px-6 py-4 font-medium text-slate-900">
+                            {user.name || "Unnamed User"}
+                          </td>
+
+                          <td className="px-6 py-4 text-slate-600">
+                            {user.email || "—"}
+                          </td>
+
+                          <td className="px-6 py-4">
+                            <span
+                              className={`rounded-full px-3 py-1 text-xs font-semibold ${
+                                isAdmin
+                                  ? "bg-cyan-50 text-cyan-700"
+                                  : "bg-slate-100 text-slate-600"
                               }`}
-                          >
-                            {user.role || "user"}
-                          </span>
-                        </td>
-                        <td className="px-6 py-4 text-slate-500">
-                          {formatDate(user.createdAt)}
-                        </td>
-                      </tr>
-                    ))}
+                            >
+                              {isAdmin ? "admin" : "user"}
+                            </span>
+                          </td>
+
+                          <td className="px-6 py-4 text-slate-500">
+                            {formatDate(user.createdAt)}
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -322,15 +455,18 @@ export default function AdminInfoClient() {
                     <th className="px-6 py-4 font-semibold">Booked On</th>
                   </tr>
                 </thead>
+
                 <tbody className="divide-y divide-slate-100">
                   {bookings.map((booking) => (
                     <tr key={booking._id} className="hover:bg-slate-50/70">
                       <td className="px-6 py-4 font-medium text-slate-900">
                         {booking.bookingId || booking._id}
                       </td>
+
                       <td className="px-6 py-4 text-slate-600">
                         {booking.email || booking.userId || "—"}
                       </td>
+
                       <td className="px-6 py-4">
                         <div className="flex items-center gap-2 text-slate-700">
                           <MapPin
@@ -340,12 +476,15 @@ export default function AdminInfoClient() {
                           {booking.title || booking.destinationId || "—"}
                         </div>
                       </td>
+
                       <td className="px-6 py-4 text-slate-600">
                         {formatDate(booking.departure)}
                       </td>
+
                       <td className="px-6 py-4 font-semibold text-slate-900">
                         ৳{Number(booking.price || 0).toLocaleString("en-BD")}
                       </td>
+
                       <td className="px-6 py-4">
                         <span
                           className={`rounded-full px-3 py-1 text-xs font-semibold ${statusStyle(
@@ -355,6 +494,7 @@ export default function AdminInfoClient() {
                           {booking.status || "Pending"}
                         </span>
                       </td>
+
                       <td className="px-6 py-4 text-slate-500">
                         {formatDate(booking.createdAt)}
                       </td>

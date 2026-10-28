@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { apiFetch } from "@/lib/api";
 
 type Destination = {
   _id: string;
@@ -42,6 +43,7 @@ type DestinationFormData = {
   country: string;
   category: string;
   price: string;
+  rating: string;
   duration: string;
   departureDate: string;
   imageUrl: string;
@@ -49,54 +51,24 @@ type DestinationFormData = {
 };
 
 type Booking = {
-  id: string;
+  id?: string;
+  _id?: string;
   destinationId?: string;
-  title: string;
-  image: string;
-  departure: string;
-  bookingId: string;
-  price: number;
-  status: "Confirmed" | "Pending" | "Cancelled";
+  destination?: { _id?: string };
+  title?: string;
+  image?: string;
+  departure?: string;
+  bookingId?: string;
+  price?: number;
+  status?: string;
 };
 
-const API_URL = "http://localhost:5000";
-
-async function readApiResponse(response: Response) {
-  const text = await response.text();
-
-  let data: any;
-
-  try {
-    data = text ? JSON.parse(text) : {};
-  } catch {
-    throw new Error(
-      `API returned invalid JSON. Status: ${response.status}. Check your backend route.`,
-    );
-  }
-
-  if (!response.ok) {
-    throw new Error(
-      data.message || `Request failed with status ${response.status}`,
-    );
-  }
-
-  return data;
-}
-
-function createFormData(destination: Destination): DestinationFormData {
-  return {
-    destinationName: destination.destinationName ?? "",
-    country: destination.country ?? "",
-    category: destination.category ?? "",
-    price: String(destination.price ?? ""),
-    duration: destination.duration ?? "",
-    departureDate: destination.departureDate
-      ? String(destination.departureDate).slice(0, 10)
-      : "",
-    imageUrl: destination.imageUrl ?? "",
-    description: destination.description ?? "",
-  };
-}
+type ApiResponse = Record<string, unknown> & {
+  message?: string;
+  destination?: Destination;
+  bookings?: Booking[];
+  data?: unknown;
+};
 
 function getTodayDate() {
   const now = new Date();
@@ -107,14 +79,28 @@ function getTodayDate() {
   )}-${String(now.getDate()).padStart(2, "0")}`;
 }
 
+function createFormData(destination: Destination): DestinationFormData {
+  return {
+    destinationName: destination.destinationName ?? "",
+    country: destination.country ?? "",
+    category: destination.category ?? "",
+    price: String(destination.price ?? ""),
+    rating: String(destination.rating ?? 4.9),
+    duration: destination.duration ?? "",
+    departureDate: destination.departureDate
+      ? String(destination.departureDate).slice(0, 10)
+      : "",
+    imageUrl: destination.imageUrl ?? "",
+    description: destination.description ?? "",
+  };
+}
+
 function formatDateTime(value?: string | Date) {
   if (!value) return "Not available";
 
   const date = new Date(value);
 
-  if (Number.isNaN(date.getTime())) {
-    return "Not available";
-  }
+  if (Number.isNaN(date.getTime())) return "Not available";
 
   return new Intl.DateTimeFormat("en-BD", {
     day: "2-digit",
@@ -125,6 +111,64 @@ function formatDateTime(value?: string | Date) {
     hour12: true,
     timeZone: "Asia/Dhaka",
   }).format(date);
+}
+
+async function readApiResponse(response: Response): Promise<ApiResponse> {
+  const text = await response.text();
+
+  let data: ApiResponse;
+
+  try {
+    const parsed: unknown = text ? JSON.parse(text) : {};
+
+    if (Array.isArray(parsed)) {
+      data = { data: parsed };
+    } else if (typeof parsed === "object" && parsed !== null) {
+      data = parsed as ApiResponse;
+    } else {
+      throw new Error("Invalid response shape");
+    }
+  } catch {
+    throw new Error(
+      `Invalid API response (${response.status}). Check your backend route.`,
+    );
+  }
+
+  if (!response.ok) {
+    if (response.status === 401) {
+      throw new Error("Please log in to continue.");
+    }
+
+    if (response.status === 403) {
+      throw new Error("Admin permission is required.");
+    }
+
+    throw new Error(
+      data.message || `Request failed with status ${response.status}.`,
+    );
+  }
+
+  return data;
+}
+
+function extractBookings(data: ApiResponse): Booking[] {
+  if (Array.isArray(data.bookings)) {
+    return data.bookings;
+  }
+
+  if (Array.isArray(data.data)) {
+    return data.data as Booking[];
+  }
+
+  if (typeof data.data === "object" && data.data !== null) {
+    const nestedBookings = (data.data as Record<string, unknown>).bookings;
+
+    if (Array.isArray(nestedBookings)) {
+      return nestedBookings as Booking[];
+    }
+  }
+
+  return [];
 }
 
 export default function DestinationDetailsClient({ id }: { id: string }) {
@@ -153,13 +197,14 @@ export default function DestinationDetailsClient({ id }: { id: string }) {
     country: "",
     category: "",
     price: "",
+    rating: "4.9",
     duration: "",
     departureDate: "",
     imageUrl: "",
     description: "",
   });
 
-  // Check whether the current authenticated user is an admin.
+  // Check Admin permission through the protected backend endpoint.
   useEffect(() => {
     let cancelled = false;
 
@@ -168,29 +213,39 @@ export default function DestinationDetailsClient({ id }: { id: string }) {
       setIsAdmin(false);
 
       try {
-        const response = await fetch(`${API_URL}/users/me`, {
-          method: "GET",
-          headers: {
-            Accept: "application/json",
-          },
-          credentials: "include",
-          cache: "no-store",
-        });
+        const response = await apiFetch("/admin/bookings");
 
-        if (!response.ok) {
+        if (response.status === 401) {
+          router.replace("/login");
           return;
         }
 
-        const user = await response.json();
+        if (response.status === 403) {
+          if (!cancelled) setIsAdmin(false);
+          return;
+        }
+
+        if (!response.ok) {
+          if (!cancelled) setIsAdmin(false);
+          return;
+        }
+
+        await readApiResponse(response);
 
         if (!cancelled) {
-          setIsAdmin(user?.role === "admin");
+          setIsAdmin(true);
         }
       } catch (err) {
-        console.error("Failed to verify admin:", err);
+        if (cancelled) return;
 
-        if (!cancelled) {
-          setIsAdmin(false);
+        setIsAdmin(false);
+
+        const message = err instanceof Error ? err.message.toLowerCase() : "";
+
+        if (message.includes("log in")) {
+          router.replace("/login");
+        } else {
+          console.error("Admin verification failed:", err);
         }
       } finally {
         if (!cancelled) {
@@ -204,9 +259,9 @@ export default function DestinationDetailsClient({ id }: { id: string }) {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [router]);
 
-  // Fetch destination details.
+  // Load destination details with JWT authentication.
   useEffect(() => {
     let cancelled = false;
 
@@ -215,44 +270,39 @@ export default function DestinationDetailsClient({ id }: { id: string }) {
       setError("");
 
       try {
-        const response = await fetch(
-          `${API_URL}/destinations/${encodeURIComponent(id)}`,
-          {
-            method: "GET",
-            headers: {
-              Accept: "application/json",
-            },
-            cache: "no-store",
-          },
+        const response = await apiFetch(
+          `/destinations/${encodeURIComponent(id)}`,
         );
 
         const data = await readApiResponse(response);
-        const item: Destination = data.destination ?? data;
+        const item = (data.destination ?? data) as Destination;
 
         if (!item?._id) {
           throw new Error("Destination not found.");
         }
 
-        if (!cancelled) {
-          setDestination(item);
-          setFormData(createFormData(item));
+        if (cancelled) return;
 
-          const destinationDate = item.departureDate
-            ? String(item.departureDate).slice(0, 10)
-            : "";
+        setDestination(item);
+        setFormData(createFormData(item));
 
-          setSelectedDate(
-            destinationDate && destinationDate >= getTodayDate()
-              ? destinationDate
-              : "",
-          );
-        }
+        const date = item.departureDate
+          ? String(item.departureDate).slice(0, 10)
+          : "";
+
+        setSelectedDate(date && date >= getTodayDate() ? date : "");
       } catch (err) {
-        if (!cancelled) {
-          setError(
-            err instanceof Error ? err.message : "Failed to load destination.",
-          );
+        if (cancelled) return;
+
+        const message =
+          err instanceof Error ? err.message : "Failed to load destination.";
+
+        if (message.toLowerCase().includes("log in")) {
+          router.replace("/login");
+          return;
         }
+
+        setError(message);
       } finally {
         if (!cancelled) {
           setLoading(false);
@@ -260,68 +310,58 @@ export default function DestinationDetailsClient({ id }: { id: string }) {
       }
     }
 
-    if (id) {
-      fetchDestination();
-    } else {
+    if (!id) {
       setLoading(false);
       setError("Destination ID is missing.");
+    } else {
+      fetchDestination();
     }
 
     return () => {
       cancelled = true;
     };
-  }, [id]);
+  }, [id, router]);
 
-  // Check whether the user has already booked this destination.
+  // Check whether this user has already booked this destination.
   useEffect(() => {
     if (!destination?._id) return;
 
     let cancelled = false;
+    const destinationId = destination._id;
 
     async function checkBooking() {
       setCheckingBooking(true);
 
       try {
-        const response = await fetch("/api/bookings", {
-          method: "GET",
-          headers: {
-            Accept: "application/json",
-          },
-          cache: "no-store",
-        });
-
-        if (response.status === 401) {
-          if (!cancelled) {
-            setAlreadyBooked(false);
-          }
-          return;
-        }
-
-        if (!response.ok) {
-          throw new Error("Unable to check your bookings.");
-        }
-
-        const data = await response.json();
-
-        const bookings: Booking[] = Array.isArray(data)
-          ? data
-          : Array.isArray(data.bookings)
-            ? data.bookings
-            : [];
+        const response = await apiFetch("/bookings");
+        const data = await readApiResponse(response);
+        const bookings = extractBookings(data);
 
         if (cancelled) return;
 
         setAlreadyBooked(
-          bookings.some(
-            (booking) =>
-              booking.destinationId === destination?._id &&
-              booking.status !== "Cancelled",
-          ),
+          bookings.some((booking) => {
+            const bookingDestinationId =
+              booking.destinationId ?? booking.destination?._id;
+
+            const status = booking.status?.toLowerCase();
+
+            return (
+              bookingDestinationId === destinationId &&
+              status !== "cancelled" &&
+              status !== "rejected"
+            );
+          }),
         );
       } catch (err) {
         if (!cancelled) {
-          console.error("Failed to check bookings:", err);
           setAlreadyBooked(false);
+
+          const message = err instanceof Error ? err.message.toLowerCase() : "";
+
+          if (!message.includes("log in")) {
+            console.error("Failed to check bookings:", err);
+          }
         }
       } finally {
         if (!cancelled) {
@@ -366,23 +406,13 @@ export default function DestinationDetailsClient({ id }: { id: string }) {
     setBookingLoading(true);
 
     try {
-      const response = await fetch("/api/bookings", {
+      const response = await apiFetch("/bookings", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Accept: "application/json",
-        },
         body: JSON.stringify({
           destinationId: destination._id,
           departure: selectedDate,
         }),
       });
-
-      if (response.status === 401) {
-        toast.error("Please log in to book this destination.");
-        router.push("/login");
-        return;
-      }
 
       if (response.status === 409) {
         setAlreadyBooked(true);
@@ -393,13 +423,16 @@ export default function DestinationDetailsClient({ id }: { id: string }) {
       const data = await readApiResponse(response);
 
       setAlreadyBooked(true);
-      toast.success(data.message || "Booking saved successfully!");
+      toast.success(data.message || "Booking saved successfully.");
     } catch (err) {
-      toast.error(
-        err instanceof Error
-          ? err.message
-          : "Unable to save your booking. Please try again.",
-      );
+      const message =
+        err instanceof Error ? err.message : "Unable to save your booking.";
+
+      toast.error(message);
+
+      if (message.toLowerCase().includes("log in")) {
+        router.push("/login");
+      }
     } finally {
       setBookingLoading(false);
     }
@@ -426,20 +459,41 @@ export default function DestinationDetailsClient({ id }: { id: string }) {
     }
 
     const price = Number(formData.price);
+    const rating = Number(formData.rating);
 
     if (formData.price.trim() === "" || !Number.isFinite(price) || price < 0) {
       toast.error("Please enter a valid price.");
       return;
     }
 
-    const previousDestination = destination;
-    const previousFormData = formData;
+    if (
+      formData.rating.trim() === "" ||
+      !Number.isFinite(rating) ||
+      rating < 1 ||
+      rating > 5
+    ) {
+      toast.error("Rating must be between 1 and 5.");
+      return;
+    }
+
+    if (formData.departureDate) {
+      const date = new Date(`${formData.departureDate}T00:00:00.000Z`);
+
+      if (
+        Number.isNaN(date.getTime()) ||
+        date.toISOString().slice(0, 10) !== formData.departureDate
+      ) {
+        toast.error("Please select a valid departure date.");
+        return;
+      }
+    }
 
     const updatePayload = {
       destinationName: formData.destinationName.trim(),
       country: formData.country.trim(),
       category: formData.category.trim(),
       price,
+      rating,
       duration: formData.duration.trim(),
       departureDate: formData.departureDate,
       imageUrl: formData.imageUrl.trim(),
@@ -451,60 +505,55 @@ export default function DestinationDetailsClient({ id }: { id: string }) {
     setSuccess("");
 
     try {
-      const response = await fetch(
-        `${API_URL}/destinations/${encodeURIComponent(id)}`,
+      const response = await apiFetch(
+        `/destinations/${encodeURIComponent(id)}`,
         {
           method: "PATCH",
-          credentials: "include",
-          headers: {
-            "Content-Type": "application/json",
-            Accept: "application/json",
-          },
           body: JSON.stringify(updatePayload),
         },
       );
 
       const data = await readApiResponse(response);
-      const apiDestination: Partial<Destination> = data.destination ?? data;
+      const apiDestination = (data.destination ?? data) as Partial<Destination>;
 
       const updatedDestination: Destination = {
-        ...previousDestination,
+        ...destination,
         ...apiDestination,
         ...updatePayload,
-        _id: apiDestination._id ?? previousDestination._id,
-        createdAt: apiDestination.createdAt ?? previousDestination.createdAt,
-        updatedAt: apiDestination.updatedAt,
+        _id: apiDestination._id ?? destination._id,
+        createdAt: apiDestination.createdAt ?? destination.createdAt,
+        updatedAt: apiDestination.updatedAt ?? new Date().toISOString(),
       };
 
       setDestination(updatedDestination);
       setFormData(createFormData(updatedDestination));
       setIsEditOpen(false);
 
-      const oldDepartureDate = previousDestination.departureDate
-        ? String(previousDestination.departureDate).slice(0, 10)
+      const oldDepartureDate = destination.departureDate
+        ? String(destination.departureDate).slice(0, 10)
+        : "";
+
+      const newDate = updatedDestination.departureDate
+        ? String(updatedDestination.departureDate).slice(0, 10)
         : "";
 
       if (selectedDate === oldDepartureDate) {
-        const updatedDate = updatedDestination.departureDate
-          ? String(updatedDestination.departureDate).slice(0, 10)
-          : "";
-
-        setSelectedDate(
-          updatedDate && updatedDate >= getTodayDate() ? updatedDate : "",
-        );
+        setSelectedDate(newDate && newDate >= getTodayDate() ? newDate : "");
       }
 
       setSuccess("Destination updated successfully.");
       toast.success("Destination updated successfully.");
+      router.refresh();
     } catch (err) {
-      setDestination(previousDestination);
-      setFormData(previousFormData);
-
       const message =
         err instanceof Error ? err.message : "Failed to update destination.";
 
       setError(message);
       toast.error(message);
+
+      if (message.toLowerCase().includes("log in")) {
+        router.push("/login");
+      }
     } finally {
       setSaving(false);
     }
@@ -522,36 +571,34 @@ export default function DestinationDetailsClient({ id }: { id: string }) {
     setError("");
 
     try {
-      const response = await fetch(
-        `${API_URL}/destinations/${encodeURIComponent(id)}`,
-        {
-          method: "DELETE",
-          credentials: "include",
-          headers: {
-            Accept: "application/json",
-          },
-        },
+      const response = await apiFetch(
+        `/destinations/${encodeURIComponent(id)}`,
+        { method: "DELETE" },
       );
 
       await readApiResponse(response);
 
       setIsDeleteOpen(false);
       toast.success("Destination deleted successfully.");
-      router.replace("/destinations");
-    } catch (err) {
-      setIsDeleteOpen(false);
 
+      router.replace("/destinations");
+      router.refresh();
+    } catch (err) {
       const message =
         err instanceof Error ? err.message : "Failed to delete destination.";
 
       setError(message);
       toast.error(message);
+
+      if (message.toLowerCase().includes("log in")) {
+        router.push("/login");
+      }
     } finally {
       setDeleting(false);
     }
   };
 
-  if (loading) {
+  if (loading || checkingAdmin) {
     return (
       <main className="flex min-h-[60vh] items-center justify-center gap-3 bg-white px-4 pt-12 sm:min-h-[70vh]">
         <Loader2 className="h-7 w-7 shrink-0 animate-spin text-[#15A1BF] sm:h-8 sm:w-8" />
@@ -565,16 +612,7 @@ export default function DestinationDetailsClient({ id }: { id: string }) {
   if (!destination) {
     return (
       <main className="mx-auto w-full max-w-3xl px-3 pb-10 pt-12 sm:px-6 sm:pt-16 lg:px-8 lg:pt-20">
-        <Toaster
-          position="top-right"
-          toastOptions={{
-            duration: 3000,
-            style: {
-              borderRadius: "10px",
-              fontSize: "14px",
-            },
-          }}
-        />
+        <Toaster position="top-right" />
 
         <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-center shadow-sm sm:p-6">
           <AlertTriangle className="mx-auto mb-3 h-8 w-8 text-red-500" />
@@ -605,10 +643,7 @@ export default function DestinationDetailsClient({ id }: { id: string }) {
         position="top-right"
         toastOptions={{
           duration: 3000,
-          style: {
-            borderRadius: "10px",
-            fontSize: "14px",
-          },
+          style: { borderRadius: "10px", fontSize: "14px" },
         }}
       />
 
@@ -624,39 +659,37 @@ export default function DestinationDetailsClient({ id }: { id: string }) {
             </Link>
           </div>
 
-          <div className="absolute right-2 top-2 z-10 flex max-w-[70%] items-center gap-1.5 sm:right-4 sm:top-4 sm:gap-2">
-            {!checkingAdmin && isAdmin && (
-              <>
-                <button
-                  type="button"
-                  disabled={saving || deleting}
-                  onClick={() => {
-                    setError("");
-                    setSuccess("");
-                    setFormData(createFormData(destination));
-                    setIsEditOpen(true);
-                  }}
-                  className="inline-flex min-w-0 items-center justify-center gap-1 rounded-md border border-gray-200 bg-white/95 px-2 py-2 text-[10px] font-medium text-gray-700 shadow-sm backdrop-blur-sm transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-60 sm:px-3 sm:text-xs"
-                >
-                  <Pencil className="h-3 w-3 shrink-0 text-gray-500" />
-                  Edit
-                </button>
+          {isAdmin && (
+            <div className="absolute right-2 top-2 z-10 flex max-w-[70%] items-center gap-1.5 sm:right-4 sm:top-4 sm:gap-2">
+              <button
+                type="button"
+                disabled={saving || deleting}
+                onClick={() => {
+                  setError("");
+                  setSuccess("");
+                  setFormData(createFormData(destination));
+                  setIsEditOpen(true);
+                }}
+                className="inline-flex items-center justify-center gap-1 rounded-md border border-gray-200 bg-white/95 px-2 py-2 text-[10px] font-medium text-gray-700 shadow-sm transition hover:bg-white disabled:opacity-60 sm:px-3 sm:text-xs"
+              >
+                <Pencil className="h-3 w-3 text-gray-500" />
+                Edit
+              </button>
 
-                <button
-                  type="button"
-                  disabled={saving || deleting}
-                  onClick={() => {
-                    setError("");
-                    setIsDeleteOpen(true);
-                  }}
-                  className="inline-flex min-w-0 items-center justify-center gap-1 rounded-md border border-gray-200 bg-white/95 px-2 py-2 text-[10px] font-medium text-red-600 shadow-sm backdrop-blur-sm transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-60 sm:px-3 sm:text-xs"
-                >
-                  <Trash2 className="h-3 w-3 shrink-0 text-red-500" />
-                  Delete
-                </button>
-              </>
-            )}
-          </div>
+              <button
+                type="button"
+                disabled={saving || deleting}
+                onClick={() => {
+                  setError("");
+                  setIsDeleteOpen(true);
+                }}
+                className="inline-flex items-center justify-center gap-1 rounded-md border border-gray-200 bg-white/95 px-2 py-2 text-[10px] font-medium text-red-600 shadow-sm transition hover:bg-white disabled:opacity-60 sm:px-3 sm:text-xs"
+              >
+                <Trash2 className="h-3 w-3 text-red-500" />
+                Delete
+              </button>
+            </div>
+          )}
 
           <div className="h-56 w-full sm:h-72 md:h-[400px] lg:h-[440px]">
             {destination.imageUrl ? (
@@ -684,8 +717,8 @@ export default function DestinationDetailsClient({ id }: { id: string }) {
             <button
               type="button"
               onClick={() => setError("")}
-              className="shrink-0"
               aria-label="Close error"
+              className="shrink-0"
             >
               <X className="h-4 w-4" />
             </button>
@@ -702,8 +735,8 @@ export default function DestinationDetailsClient({ id }: { id: string }) {
             <button
               type="button"
               onClick={() => setSuccess("")}
-              className="shrink-0"
               aria-label="Close message"
+              className="shrink-0"
             >
               <X className="h-4 w-4" />
             </button>
@@ -728,7 +761,7 @@ export default function DestinationDetailsClient({ id }: { id: string }) {
                 <div className="flex flex-wrap items-center gap-1">
                   <Star className="h-3.5 w-3.5 shrink-0 fill-emerald-500 text-emerald-500" />
                   <span className="font-bold text-emerald-600">
-                    {destination.rating ?? 4.9}
+                    {destination.rating ?? "Not rated"}
                   </span>
                   <span className="text-gray-400">(1234 reviews)</span>
                 </div>
@@ -900,7 +933,7 @@ export default function DestinationDetailsClient({ id }: { id: string }) {
         </section>
       </div>
 
-      {/* Edit destination modal */}
+      {/* Edit destination dialog */}
       {isEditOpen && isAdmin && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/50 p-2 sm:p-4"
@@ -917,7 +950,7 @@ export default function DestinationDetailsClient({ id }: { id: string }) {
                   Edit destination
                 </h2>
                 <p className="mt-1 text-sm leading-relaxed text-gray-500">
-                  Update destination information.
+                  Update destination information and rating.
                 </p>
               </div>
 
@@ -981,6 +1014,27 @@ export default function DestinationDetailsClient({ id }: { id: string }) {
                 </label>
 
                 <label className="block min-w-0 text-sm font-medium text-gray-700">
+                  Rating (1–5)
+                  <div className="relative mt-2">
+                    <Star className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 fill-amber-400 text-amber-400" />
+                    <input
+                      required
+                      type="number"
+                      name="rating"
+                      min="1"
+                      max="5"
+                      step="0.1"
+                      value={formData.rating}
+                      onChange={handleInputChange}
+                      className="w-full min-w-0 rounded-lg border border-gray-300 py-2.5 pl-9 pr-3 outline-none focus:border-[#15A1BF] focus:ring-2 focus:ring-cyan-100"
+                    />
+                  </div>
+                  <span className="mt-1 block text-xs font-normal text-gray-500">
+                    Enter a rating between 1 and 5.
+                  </span>
+                </label>
+
+                <label className="block min-w-0 text-sm font-medium text-gray-700">
                   Duration
                   <input
                     required
@@ -997,6 +1051,7 @@ export default function DestinationDetailsClient({ id }: { id: string }) {
                   <input
                     type="date"
                     name="departureDate"
+                    min={getTodayDate()}
                     value={formData.departureDate}
                     onChange={handleInputChange}
                     className="mt-2 w-full min-w-0 rounded-lg border border-gray-300 px-3 py-2.5 outline-none focus:border-[#15A1BF] focus:ring-2 focus:ring-cyan-100"
@@ -1065,7 +1120,7 @@ export default function DestinationDetailsClient({ id }: { id: string }) {
         </div>
       )}
 
-      {/* Delete confirmation modal */}
+      {/* Delete confirmation dialog */}
       {isDeleteOpen && isAdmin && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/50 p-3 sm:p-4"

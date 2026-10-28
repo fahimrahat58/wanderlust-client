@@ -4,22 +4,16 @@ import { useState } from "react";
 import type { ChangeEvent, FormEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import {
-  Loader2,
-  ArrowLeft,
-  X,
-  Plus,
-  AlertTriangle,
-} from "lucide-react";
+import { Loader2, ArrowLeft, X, Plus, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
-
-const API_URL = "http://localhost:5000";
+import { apiFetch } from "@/lib/api";
 
 type FormData = {
   destinationName: string;
   country: string;
   category: string;
   price: string;
+  rating: string;
   duration: string;
   departureDate: string;
   imageUrl: string;
@@ -28,72 +22,175 @@ type FormData = {
 
 type ApiResponse = {
   message?: string;
+  error?: string;
+  errors?: string[] | string;
   destination?: { _id?: string };
-  package?: { _id?: string };
 };
+
+const INITIAL_FORM: FormData = {
+  destinationName: "",
+  country: "",
+  category: "Beach",
+  price: "",
+  rating: "5",
+  duration: "",
+  departureDate: "",
+  imageUrl: "",
+  description: "",
+};
+
+function getTodayDate() {
+  const now = new Date();
+
+  return [
+    now.getFullYear(),
+    String(now.getMonth() + 1).padStart(2, "0"),
+    String(now.getDate()).padStart(2, "0"),
+  ].join("-");
+}
+
+async function readResponse(response: Response): Promise<ApiResponse> {
+  const text = await response.text();
+
+  let data: ApiResponse = {};
+
+  if (text) {
+    try {
+      data = JSON.parse(text) as ApiResponse;
+    } catch {
+      if (!response.ok) {
+        throw new Error(
+          `Server request failed (${response.status}). Please check the backend.`,
+        );
+      }
+
+      throw new Error("Invalid server response. Please check the backend.");
+    }
+  }
+
+  if (!response.ok) {
+    if (response.status === 401) {
+      throw new Error("Please sign in to your admin account.");
+    }
+
+    if (response.status === 403) {
+      throw new Error("Only the admin can add destinations.");
+    }
+
+    const serverErrors = Array.isArray(data.errors)
+      ? data.errors.join(" ")
+      : typeof data.errors === "string"
+        ? data.errors
+        : "";
+
+    throw new Error(
+      serverErrors ||
+        data.message ||
+        data.error ||
+        `Request failed (${response.status}).`,
+    );
+  }
+
+  return data;
+}
 
 export default function AddDestinationClient() {
   const router = useRouter();
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-
-  const [formData, setFormData] = useState<FormData>({
-    destinationName: "",
-    country: "",
-    category: "Beach",
-    price: "",
-    duration: "",
-    departureDate: "",
-    imageUrl: "",
-    description: "",
-  });
+  const [formData, setFormData] = useState<FormData>(INITIAL_FORM);
 
   const handleChange = (
-    e: ChangeEvent<
+    event: ChangeEvent<
       HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
     >,
   ) => {
-    const { name, value } = e.target;
+    const { name, value } = event.target;
 
-    setFormData((prev) => ({
-      ...prev,
+    setFormData((previous) => ({
+      ...previous,
       [name]: value,
     }));
 
     if (error) setError("");
   };
 
-  const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
 
     if (loading) return;
 
     const destinationName = formData.destinationName.trim();
     const country = formData.country.trim();
+    const category = formData.category.trim();
     const duration = formData.duration.trim();
-    const description = formData.description.trim();
+    const departureDate = formData.departureDate;
     const imageUrl = formData.imageUrl.trim();
-    const price = Number(formData.price);
+    const description = formData.description.trim();
 
-    if (!destinationName || !country || !duration || !description) {
+    const price = Number(formData.price);
+    const rating = Number(formData.rating);
+
+    if (
+      !destinationName ||
+      !country ||
+      !category ||
+      !duration ||
+      !departureDate ||
+      !imageUrl ||
+      !description
+    ) {
       setError("Please fill in all required fields.");
       return;
     }
 
-    if (
-      formData.price.trim() === "" ||
-      !Number.isFinite(price) ||
-      price < 0
-    ) {
+    if (formData.price.trim() === "" || !Number.isFinite(price) || price < 0) {
       setError("Please enter a valid non-negative price.");
       return;
     }
 
     if (
-      imageUrl &&
-      !/^https?:\/\/\S+$/i.test(imageUrl)
+      formData.rating.trim() === "" ||
+      !Number.isFinite(rating) ||
+      rating < 1 ||
+      rating > 5
     ) {
+      setError("Please enter a rating between 1 and 5.");
+      return;
+    }
+
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(departureDate)) {
+      setError("Please select a valid departure date.");
+      return;
+    }
+
+    const parsedDate = new Date(`${departureDate}T00:00:00.000Z`);
+
+    if (
+      Number.isNaN(parsedDate.getTime()) ||
+      parsedDate.toISOString().slice(0, 10) !== departureDate
+    ) {
+      setError("Please select a valid departure date.");
+      return;
+    }
+
+    if (departureDate < getTodayDate()) {
+      setError("Departure date cannot be in the past.");
+      return;
+    }
+
+    try {
+      const parsedImageUrl = new URL(imageUrl);
+
+      if (
+        parsedImageUrl.protocol !== "http:" &&
+        parsedImageUrl.protocol !== "https:"
+      ) {
+        setError("Image URL must start with HTTP or HTTPS.");
+        return;
+      }
+    } catch {
       setError("Please enter a valid image URL.");
       return;
     }
@@ -105,66 +202,44 @@ export default function AddDestinationClient() {
       const payload = {
         destinationName,
         country,
-        category: formData.category,
+        category,
         price,
+        rating,
         duration,
-        departureDate: formData.departureDate,
+        departureDate,
         imageUrl,
         description,
       };
 
-      const response = await fetch(`${API_URL}/adddestinations`, {
+      console.log("[Add Destination] Sending request.");
+
+      const response = await apiFetch("/adddestinations", {
         method: "POST",
-        credentials: "include",
-        headers: {
-          "Content-Type": "application/json",
-          Accept: "application/json",
-        },
         body: JSON.stringify(payload),
       });
 
-      const responseText = await response.text();
+      const result = await readResponse(response);
 
-      let data: ApiResponse;
-
-      try {
-        data = responseText ? JSON.parse(responseText) : {};
-      } catch {
-        throw new Error(
-          `Invalid response from server (${response.status}). Please check your backend.`,
-        );
-      }
-
-      if (!response.ok) {
-        throw new Error(
-          data.message ||
-            (response.status === 401
-              ? "Please sign in to your admin account."
-              : response.status === 403
-                ? "Only the admin can add destinations."
-                : `Failed to create destination (${response.status}).`),
-        );
-      }
-
-      setFormData({
-        destinationName: "",
-        country: "",
-        category: "Beach",
-        price: "",
-        duration: "",
-        departureDate: "",
-        imageUrl: "",
-        description: "",
+      console.log("[Add Destination] Created successfully.", {
+        destinationId: result.destination?._id,
       });
+
+      setFormData({ ...INITIAL_FORM });
 
       router.push("/destinations");
       router.refresh();
-    } catch (err: unknown) {
-      setError(
+    } catch (err) {
+      const message =
         err instanceof Error
           ? err.message
-          : "Something went wrong. Please try again.",
-      );
+          : "Something went wrong. Please try again.";
+
+      console.error("[Add Destination] Request failed:", message);
+      setError(message);
+
+      if (/\bsign in\b|\blog in\b|unauthorized|401/i.test(message)) {
+        router.push("/login");
+      }
     } finally {
       setLoading(false);
     }
@@ -172,7 +247,7 @@ export default function AddDestinationClient() {
 
   return (
     <main className="min-h-screen overflow-x-hidden bg-white px-3 pb-10 pt-20 text-slate-800 sm:px-6 sm:pb-16 sm:pt-28 lg:px-8">
-      <div className="mx-auto w-full max-w-4xl min-w-0">
+      <div className="mx-auto w-full min-w-0 max-w-4xl">
         <div className="mb-5 sm:mb-6">
           <Link
             href="/destinations"
@@ -191,6 +266,7 @@ export default function AddDestinationClient() {
           {error && (
             <div
               role="alert"
+              aria-live="polite"
               className="mb-6 flex min-w-0 items-start gap-2 border border-rose-200 bg-rose-50 p-3 text-xs text-rose-600 sm:text-sm"
             >
               <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
@@ -228,7 +304,7 @@ export default function AddDestinationClient() {
                   required
                   maxLength={150}
                   disabled={loading}
-                  className="w-full min-w-0 border border-slate-200 px-3 py-2.5 text-sm text-slate-800 outline-none transition focus:border-[#15A1BF] disabled:bg-slate-50"
+                  className="w-full min-w-0 border border-slate-200 px-3 py-2.5 text-sm outline-none transition focus:border-[#15A1BF] disabled:bg-slate-50"
                 />
               </div>
 
@@ -245,8 +321,9 @@ export default function AddDestinationClient() {
                   name="category"
                   value={formData.category}
                   onChange={handleChange}
+                  required
                   disabled={loading}
-                  className="w-full min-w-0 border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none transition focus:border-[#15A1BF] disabled:bg-slate-50"
+                  className="w-full min-w-0 border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none transition focus:border-[#15A1BF] disabled:bg-slate-50"
                 >
                   <option value="Beach">Beach</option>
                   <option value="Mountain">Mountain</option>
@@ -274,7 +351,7 @@ export default function AddDestinationClient() {
                   required
                   maxLength={100}
                   disabled={loading}
-                  className="w-full min-w-0 border border-slate-200 px-3 py-2.5 text-sm text-slate-800 outline-none transition focus:border-[#15A1BF] disabled:bg-slate-50"
+                  className="w-full min-w-0 border border-slate-200 px-3 py-2.5 text-sm outline-none transition focus:border-[#15A1BF] disabled:bg-slate-50"
                 />
               </div>
 
@@ -296,7 +373,7 @@ export default function AddDestinationClient() {
                   required
                   maxLength={100}
                   disabled={loading}
-                  className="w-full min-w-0 border border-slate-200 px-3 py-2.5 text-sm text-slate-800 outline-none transition focus:border-[#15A1BF] disabled:bg-slate-50"
+                  className="w-full min-w-0 border border-slate-200 px-3 py-2.5 text-sm outline-none transition focus:border-[#15A1BF] disabled:bg-slate-50"
                 />
               </div>
 
@@ -319,7 +396,31 @@ export default function AddDestinationClient() {
                   min="0"
                   step="any"
                   disabled={loading}
-                  className="w-full min-w-0 border border-slate-200 px-3 py-2.5 text-sm text-slate-800 outline-none transition focus:border-[#15A1BF] disabled:bg-slate-50"
+                  className="w-full min-w-0 border border-slate-200 px-3 py-2.5 text-sm outline-none transition focus:border-[#15A1BF] disabled:bg-slate-50"
+                />
+              </div>
+
+              <div className="min-w-0 space-y-1.5">
+                <label
+                  htmlFor="rating"
+                  className="block text-xs font-medium text-slate-600"
+                >
+                  Rating (1–5)
+                </label>
+
+                <input
+                  id="rating"
+                  type="number"
+                  name="rating"
+                  value={formData.rating}
+                  onChange={handleChange}
+                  placeholder="5"
+                  required
+                  min="1"
+                  max="5"
+                  step="0.1"
+                  disabled={loading}
+                  className="w-full min-w-0 border border-slate-200 px-3 py-2.5 text-sm outline-none transition focus:border-[#15A1BF] disabled:bg-slate-50"
                 />
               </div>
 
@@ -336,9 +437,11 @@ export default function AddDestinationClient() {
                   type="date"
                   name="departureDate"
                   value={formData.departureDate}
+                  min={getTodayDate()}
                   onChange={handleChange}
+                  required
                   disabled={loading}
-                  className="w-full min-w-0 max-w-full appearance-none border border-slate-200 px-2 py-2.5 text-sm text-slate-800 outline-none transition focus:border-[#15A1BF] disabled:bg-slate-50 sm:px-3"
+                  className="w-full min-w-0 max-w-full appearance-none border border-slate-200 px-2 py-2.5 text-sm outline-none transition focus:border-[#15A1BF] disabled:bg-slate-50 sm:px-3"
                 />
               </div>
             </div>
@@ -358,8 +461,10 @@ export default function AddDestinationClient() {
                 value={formData.imageUrl}
                 onChange={handleChange}
                 placeholder="https://example.com/image.jpg"
+                required
+                maxLength={2048}
                 disabled={loading}
-                className="w-full min-w-0 border border-slate-200 px-3 py-2.5 text-sm text-slate-800 outline-none transition focus:border-[#15A1BF] disabled:bg-slate-50"
+                className="w-full min-w-0 border border-slate-200 px-3 py-2.5 text-sm outline-none transition focus:border-[#15A1BF] disabled:bg-slate-50"
               />
             </div>
 
@@ -381,7 +486,7 @@ export default function AddDestinationClient() {
                 required
                 maxLength={5000}
                 disabled={loading}
-                className="w-full min-w-0 resize-y border border-slate-200 px-3 py-2.5 text-sm text-slate-800 outline-none transition focus:border-[#15A1BF] disabled:bg-slate-50"
+                className="w-full min-w-0 resize-y border border-slate-200 px-3 py-2.5 text-sm outline-none transition focus:border-[#15A1BF] disabled:bg-slate-50"
               />
             </div>
 

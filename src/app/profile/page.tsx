@@ -1,636 +1,812 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import type { FormEvent, ReactNode } from "react";
+import Image from "next/image";
+import { useRouter } from "next/navigation";
+import toast, { Toaster } from "react-hot-toast";
 import {
-  Camera,
+  UserRound,
+  Mail,
   MapPin,
-  Pencil,
+  CalendarDays,
   Plane,
+  Ticket,
+  Wallet,
   Globe,
-  TrendingUp,
-  DollarSign,
+  Loader2,
+  Pencil,
   X,
   Save,
-  Image as ImageIcon,
-  Loader2,
-  CalendarDays,
-  UserRound,
+  CheckCircle2,
+  Clock,
+  CircleX,
+  ArrowRight,
 } from "lucide-react";
+import { apiFetch } from "@/lib/api";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000";
-const DEFAULT_IMAGE = "https://placehold.co/250x250?text=Profile";
-
-type ProfileData = {
-  name?: string;
-  email?: string;
-  profileImage?: string;
-  nationality?: string;
-  createdAt?: string | Date;
-};
 
 type Booking = {
   _id?: string;
+  id?: string;
   bookingId?: string;
   destinationId?: string;
-  price?: number;
-  status?: string;
+  destinationName?: string;
+  title?: string;
+  name?: string;
+  image?: string;
+  imageUrl?: string;
   departure?: string;
+  departureDate?: string;
+  price?: number | string;
+  totalPrice?: number | string;
+  status?: string;
+  createdAt?: string;
 };
 
 type Destination = {
   _id?: string;
+  id?: string;
+  destinationName?: string;
+  name?: string;
   country?: string;
 };
 
-type StatCardProps = {
-  label: string;
-  value: string;
-  icon: ReactNode;
-  iconClass: string;
+type ProfileUser = {
+  _id?: string;
+  authUserId?: string;
+  id?: string;
+  name?: string;
+  email?: string;
+  profileImage?: string;
+  image?: string;
+  nationality?: string;
+  createdAt?: string;
 };
 
+function extractArray<T>(data: unknown, keys: string[] = []): T[] {
+  if (Array.isArray(data)) return data as T[];
+
+  if (data && typeof data === "object") {
+    const record = data as Record<string, unknown>;
+
+    for (const key of keys) {
+      if (Array.isArray(record[key])) {
+        return record[key] as T[];
+      }
+    }
+  }
+
+  return [];
+}
+
+async function readResponse(response: Response) {
+  const text = await response.text();
+
+  if (!text) return {};
+
+  try {
+    return JSON.parse(text);
+  } catch {
+    return { message: text };
+  }
+}
+
+function getBookingTitle(booking: Booking) {
+  return (
+    booking.title || booking.destinationName || booking.name || "Destination"
+  );
+}
+
+function getBookingImage(booking: Booking) {
+  return booking.image || booking.imageUrl || "/placeholder.jpg";
+}
+
+function getBookingPrice(booking: Booking) {
+  const price = Number(booking.totalPrice ?? booking.price ?? 0);
+  return Number.isFinite(price) ? price : 0;
+}
+
+function getBookingDate(booking: Booking) {
+  return booking.departure || booking.departureDate || "";
+}
+
+function getBookingStatus(booking: Booking) {
+  return String(booking.status || "Pending").toLowerCase();
+}
+
+function formatDate(date?: string) {
+  if (!date) return "Not specified";
+
+  const parsedDate = new Date(date);
+
+  if (Number.isNaN(parsedDate.getTime())) return date;
+
+  return parsedDate.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
+function formatPrice(price: number) {
+  return new Intl.NumberFormat("en-BD", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 0,
+  }).format(price);
+}
+
 export default function Profile() {
-  const [profile, setProfile] = useState<ProfileData>({});
+  const router = useRouter();
+
+  const [user, setUser] = useState<ProfileUser | null>(null);
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [destinations, setDestinations] = useState<Destination[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [editing, setEditing] = useState(false);
 
-  const [isLoading, setIsLoading] = useState(true);
-  const [isSaving, setIsSaving] = useState(false);
-  const [isDialogOpen, setIsDialogOpen] = useState(false);
-
-  const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
-
-  const [nameInput, setNameInput] = useState("");
-  const [imageInput, setImageInput] = useState("");
-  const [nationalityInput, setNationalityInput] = useState("");
-
-  const [today, setToday] = useState<number | null>(null);
-
-  useEffect(() => {
-    const date = new Date();
-    date.setHours(0, 0, 0, 0);
-    setToday(date.getTime());
-  }, []);
+  const [formData, setFormData] = useState({
+    name: "",
+    profileImage: "",
+    nationality: "",
+  });
 
   const loadProfile = useCallback(async () => {
-    setIsLoading(true);
-    setError("");
+    setLoading(true);
 
     try {
-      const [profileResponse, bookingsResponse, destinationsResponse] =
+      const [userResponse, bookingsResponse, destinationsResponse] =
         await Promise.all([
-          fetch(`${API_URL}/users/me`, {
-            credentials: "include",
-            cache: "no-store",
-          }),
-          fetch(`${API_URL}/bookings`, {
-            credentials: "include",
-            cache: "no-store",
-          }),
+          apiFetch("/users/me"),
+          apiFetch("/bookings"),
           fetch(`${API_URL}/destinations`, {
+            method: "GET",
+            headers: { Accept: "application/json" },
             cache: "no-store",
           }),
         ]);
 
-      const profileData = await profileResponse.json();
-
-      if (!profileResponse.ok) {
-        throw new Error(profileData.message || "Failed to load your profile.");
+      if (userResponse.status === 401 || bookingsResponse.status === 401) {
+        toast.error("Please log in to view your profile.");
+        router.replace("/login");
+        return;
       }
 
-      const savedProfile: ProfileData = profileData.user ?? profileData;
+      if (userResponse.status === 403 || bookingsResponse.status === 403) {
+        throw new Error(
+          "You do not have permission to access this information.",
+        );
+      }
 
-      setProfile(savedProfile);
-      setNameInput(savedProfile.name || "");
-      setImageInput(savedProfile.profileImage || "");
-      setNationalityInput(savedProfile.nationality || "");
+      const userData = await readResponse(userResponse);
+
+      if (!userResponse.ok) {
+        throw new Error(userData.message || "Failed to load profile.");
+      }
+
+      const profileUser: ProfileUser =
+        userData?.user || userData?.data || userData;
+
+      setUser(profileUser);
+
+      setFormData({
+        name: profileUser?.name || "",
+        profileImage: profileUser?.profileImage || profileUser?.image || "",
+        nationality: profileUser?.nationality || "",
+      });
 
       if (bookingsResponse.ok) {
-        const bookingsData = await bookingsResponse.json();
+        const bookingsData = await readResponse(bookingsResponse);
 
         setBookings(
-          Array.isArray(bookingsData.bookings) ? bookingsData.bookings : [],
+          extractArray<Booking>(bookingsData, ["bookings", "data", "results"]),
         );
       } else {
         setBookings([]);
+        console.error(
+          "Bookings API error:",
+          bookingsResponse.status,
+          await bookingsResponse.text(),
+        );
       }
 
       if (destinationsResponse.ok) {
-        const destinationsData = await destinationsResponse.json();
+        const destinationsData = await readResponse(destinationsResponse);
 
         setDestinations(
-          Array.isArray(destinationsData)
-            ? destinationsData
-            : Array.isArray(destinationsData.destinations)
-              ? destinationsData.destinations
-              : [],
+          extractArray<Destination>(destinationsData, [
+            "destinations",
+            "data",
+            "results",
+          ]),
         );
       } else {
         setDestinations([]);
       }
-    } catch (err) {
-      setError(
-        err instanceof Error ? err.message : "Failed to load your profile.",
-      );
+    } catch (error) {
+      console.error("Profile loading error:", error);
+
+      const message =
+        error instanceof Error ? error.message : "Failed to load profile.";
+
+      if (message.toLowerCase().includes("log in")) {
+        toast.error("Please log in to view your profile.");
+        router.replace("/login");
+        return;
+      }
+
+      toast.error(message);
     } finally {
-      setIsLoading(false);
+      setLoading(false);
     }
-  }, []);
+  }, [router]);
 
   useEffect(() => {
     void loadProfile();
   }, [loadProfile]);
 
-  const openEditDialog = () => {
-    // প্রতিবার saved data থেকে form পূরণ হবে।
-    setNameInput(profile.name || "");
-    setImageInput(profile.profileImage || "");
-    setNationalityInput(profile.nationality || "");
-    setError("");
-    setSuccess("");
-    setIsDialogOpen(true);
-  };
-
-  const handleSave = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-
-    setError("");
-    setSuccess("");
-
-    const updatedFields: Record<string, string> = {};
-
-    const originalName = profile.name || "";
-    const originalImage = profile.profileImage || "";
-    const originalNationality = profile.nationality || "";
-
-    if (nameInput.trim() !== originalName) {
-      if (!nameInput.trim()) {
-        setError("Please enter your full name.");
-        return;
-      }
-
-      updatedFields.name = nameInput.trim();
-    }
-
-    if (imageInput.trim() !== originalImage) {
-      updatedFields.profileImage = imageInput.trim();
-    }
-
-    if (nationalityInput.trim() !== originalNationality) {
-      updatedFields.nationality = nationalityInput.trim();
-    }
-
-    // কোনো field পরিবর্তন না হলে request পাঠানোর প্রয়োজন নেই।
-    if (Object.keys(updatedFields).length === 0) {
-      setIsDialogOpen(false);
+  const updateProfile = async () => {
+    if (!formData.name.trim()) {
+      toast.error("Name is required.");
       return;
     }
 
-    setIsSaving(true);
+    setSaving(true);
 
     try {
-      const response = await fetch(`${API_URL}/users/me`, {
+      const response = await apiFetch("/users/me", {
         method: "PATCH",
-        credentials: "include",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(updatedFields),
+        body: JSON.stringify({
+          name: formData.name.trim(),
+          profileImage: formData.profileImage.trim(),
+          nationality: formData.nationality.trim(),
+        }),
       });
 
-      const data = await response.json();
+      const data = await readResponse(response);
 
-      if (!response.ok) {
-        throw new Error(data.message || "Failed to update your profile.");
+      if (response.status === 401) {
+        toast.error("Your session has expired. Please log in again.");
+        router.replace("/login");
+        return;
       }
 
-      const updatedProfile: ProfileData = data.user ?? data;
+      if (!response.ok) {
+        throw new Error(data.message || "Failed to update profile.");
+      }
 
-      // API response-এ কোনো field না থাকলে আগের data রাখা হবে।
-      const mergedProfile: ProfileData = {
-        ...profile,
-        ...updatedProfile,
-        ...updatedFields,
-      };
+      const updatedUser: ProfileUser = data?.user || data?.data || data;
 
-      setProfile(mergedProfile);
-      setNameInput(mergedProfile.name || "");
-      setImageInput(mergedProfile.profileImage || "");
-      setNationalityInput(mergedProfile.nationality || "");
+      setUser((previous) => ({
+        ...previous,
+        ...updatedUser,
+        name: updatedUser.name ?? formData.name.trim(),
+        profileImage: updatedUser.profileImage ?? formData.profileImage.trim(),
+        nationality: updatedUser.nationality ?? formData.nationality.trim(),
+      }));
 
-      setIsDialogOpen(false);
-      setSuccess("Profile updated successfully.");
-    } catch (err) {
-      setError(
-        err instanceof Error ? err.message : "Failed to update your profile.",
-      );
+      setFormData({
+        name: updatedUser.name ?? formData.name.trim(),
+        profileImage: updatedUser.profileImage ?? formData.profileImage.trim(),
+        nationality: updatedUser.nationality ?? formData.nationality.trim(),
+      });
+
+      setEditing(false);
+      toast.success("Profile updated successfully.");
+    } catch (error) {
+      console.error("Profile update error:", error);
+
+      const message =
+        error instanceof Error ? error.message : "Failed to update profile.";
+
+      if (message.toLowerCase().includes("log in")) {
+        toast.error("Please log in to update your profile.");
+        router.replace("/login");
+        return;
+      }
+
+      toast.error(message);
     } finally {
-      setIsSaving(false);
+      setSaving(false);
     }
   };
 
   const activeBookings = bookings.filter(
-    (booking) => booking.status?.toLowerCase() !== "cancelled",
+    (booking) => getBookingStatus(booking) !== "cancelled",
   );
 
   const confirmedBookings = bookings.filter(
-    (booking) => booking.status?.toLowerCase() === "confirmed",
+    (booking) => getBookingStatus(booking) === "confirmed",
   );
 
   const totalSpend = confirmedBookings.reduce(
-    (total, booking) => total + (Number(booking.price) || 0),
+    (total, booking) => total + getBookingPrice(booking),
     0,
   );
 
-  const upcomingTrips =
-    today === null
-      ? 0
-      : activeBookings.filter((booking) => {
-          if (!booking.departure) return false;
+  const upcomingTrips = bookings.filter((booking) => {
+    const status = getBookingStatus(booking);
+    const date = getBookingDate(booking);
 
-          const departureDate = Date.parse(`${booking.departure}T00:00:00`);
-
-          return (
-            !Number.isNaN(departureDate) &&
-            departureDate >= today &&
-            ["pending", "confirmed"].includes(
-              booking.status?.toLowerCase() || "",
-            )
-          );
-        }).length;
-
-  const destinationById = new Map(
-    destinations.map((destination) => [
-      String(destination._id || ""),
-      destination,
-    ]),
-  );
-
-  const countriesVisited =
-    today === null
-      ? 0
-      : new Set(
-          confirmedBookings
-            .filter((booking) => {
-              if (!booking.departure) return false;
-
-              const departureDate = Date.parse(`${booking.departure}T00:00:00`);
-
-              return !Number.isNaN(departureDate) && departureDate < today;
-            })
-            .map((booking) =>
-              destinationById
-                .get(String(booking.destinationId || ""))
-                ?.country?.trim()
-                .toLowerCase(),
-            )
-            .filter((country): country is string => Boolean(country)),
-        ).size;
-
-  const memberSince = profile.createdAt
-    ? new Date(profile.createdAt).toLocaleDateString("en-US", {
-        month: "short",
-        year: "numeric",
-      })
-    : "Recently";
-
-  if (isLoading) {
     return (
-      <main className="flex min-h-screen items-center justify-center bg-[#f8f9fa] px-4">
-        <div className="flex items-center gap-3 text-[#179BAE]">
-          <Loader2 size={24} className="animate-spin" />
-          <span className="text-sm font-medium">Loading your profile...</span>
-        </div>
-      </main>
+      (status === "confirmed" || status === "pending") &&
+      date &&
+      new Date(date).getTime() >= Date.now()
+    );
+  });
+
+  const countriesVisited = new Set(
+    bookings
+      .filter((booking) => {
+        const date = getBookingDate(booking);
+
+        return (
+          getBookingStatus(booking) === "confirmed" &&
+          date &&
+          new Date(date).getTime() < Date.now()
+        );
+      })
+      .map((booking) => {
+        const destination = destinations.find((item) => {
+          const destinationId = String(item._id || item.id || "");
+          return destinationId === String(booking.destinationId || "");
+        });
+
+        return destination?.country;
+      })
+      .filter((country): country is string => Boolean(country)),
+  ).size;
+
+  if (loading) {
+    return (
+      <div className="flex min-h-[60vh] items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-cyan-600" />
+      </div>
     );
   }
 
   return (
-    <main className="min-h-screen overflow-x-hidden bg-[#f8f9fa] px-3 pb-8 pt-28 sm:px-6 sm:pb-10 sm:pt-32 lg:px-10 lg:pt-36">
-      <div className="mx-auto max-w-5xl font-sans text-gray-800">
-        <header className="mb-6 sm:mb-8">
-          <h1 className="font-serif text-2xl font-bold text-gray-900 sm:text-3xl">
+    <main className="min-h-screen bg-slate-50 px-3 pb-8 pt-20 sm:px-5 sm:pt-24 md:px-6 md:pt-28 lg:px-8 lg:pt-32">
+      <Toaster position="top-right" />
+
+      <div className="mx-auto max-w-6xl">
+        <div className="mb-8">
+          <p className="text-sm font-medium text-cyan-700">
+            Wanderlust / My Account
+          </p>
+
+          <h1 className="mt-2 text-2xl font-bold text-slate-900 sm:text-3xl">
             My Profile
           </h1>
-          <p className="mt-2 max-w-xl text-sm leading-6 text-gray-500 sm:text-base">
-            Manage your account settings and travel preferences.
+
+          <p className="mt-2 text-sm text-slate-500">
+            Manage your personal information and travel activity.
           </p>
-        </header>
+        </div>
 
-        {error && !isDialogOpen && (
-          <div
-            role="alert"
-            className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700"
-          >
-            <span>{error}</span>
-            <button
-              type="button"
-              onClick={() => void loadProfile()}
-              className="font-semibold underline"
-            >
-              Retry
-            </button>
-          </div>
-        )}
+        <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-[320px_minmax(0,1fr)]">
+          <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="flex flex-col items-center text-center">
+              <div className="relative flex h-24 w-24 items-center justify-center overflow-hidden rounded-full bg-cyan-100">
+                {user?.profileImage || user?.image ? (
+                  <Image
+                    src={user.profileImage || user.image || ""}
+                    alt={user.name || "Profile"}
+                    fill
+                    sizes="96px"
+                    className="object-cover"
+                    unoptimized
+                  />
+                ) : (
+                  <UserRound className="h-12 w-12 text-cyan-700" />
+                )}
+              </div>
 
-        {success && (
-          <div
-            role="status"
-            className="mb-5 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-700"
-          >
-            {success}
-          </div>
-        )}
+              <h2 className="mt-4 text-xl font-semibold text-slate-900">
+                {user?.name || "Traveler"}
+              </h2>
 
-        <div className="grid grid-cols-1 items-start gap-5 sm:gap-6 md:grid-cols-3 lg:gap-8">
-          <section className="flex min-w-0 flex-col items-center rounded-2xl border border-gray-100 bg-white p-4 shadow-sm sm:p-6">
-            <div className="relative mb-4">
-              <img
-                src={profile.profileImage || DEFAULT_IMAGE}
-                alt="Profile"
-                onError={(event) => {
-                  event.currentTarget.onerror = null;
-                  event.currentTarget.src = DEFAULT_IMAGE;
-                }}
-                className="h-24 w-24 rounded-full border-2 border-white object-cover shadow-md sm:h-32 sm:w-32"
-              />
+              <p className="mt-1 break-all text-sm text-slate-500">
+                {user?.email}
+              </p>
+
+              {user?.nationality && (
+                <p className="mt-3 flex items-center gap-2 text-sm text-slate-600">
+                  <MapPin className="h-4 w-4 text-cyan-600" />
+                  {user.nationality}
+                </p>
+              )}
 
               <button
                 type="button"
-                onClick={openEditDialog}
-                aria-label="Edit profile image"
-                className="absolute bottom-1 right-1 rounded-full border-2 border-white bg-[#149B9E] p-2 text-white shadow transition hover:bg-[#0f7a7c]"
+                onClick={() => setEditing(true)}
+                className="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-cyan-200 px-4 py-2.5 text-sm font-semibold text-cyan-700 transition hover:bg-cyan-50"
               >
-                <Camera size={15} />
+                <Pencil className="h-4 w-4" />
+                Edit Profile
               </button>
             </div>
 
-            <h2 className="break-words text-center text-xl font-bold text-gray-900">
-              {profile.name || "Wanderlust Traveler"}
-            </h2>
+            <div className="mt-6 border-t border-slate-100 pt-5">
+              <div className="flex items-start gap-3">
+                <CalendarDays className="mt-0.5 h-5 w-5 text-cyan-600" />
 
-            {profile.email && (
-              <p className="mt-1 max-w-full break-all text-center text-xs text-gray-500">
-                {profile.email}
-              </p>
-            )}
+                <div>
+                  <p className="text-sm font-medium text-slate-800">
+                    Member since
+                  </p>
 
-            <div className="mb-6 mt-3 flex items-center text-xs text-gray-400">
-              <MapPin size={14} className="mr-1 shrink-0" />
-              <span>{profile.nationality || "Nationality not specified"}</span>
-            </div>
-
-            <div className="mb-6 w-full space-y-4 border-t border-gray-100 pt-5">
-              <div className="flex items-center justify-between gap-3 text-xs">
-                <span className="text-gray-400">Member Since</span>
-                <span className="text-right font-semibold text-gray-800">
-                  {memberSince}
-                </span>
-              </div>
-
-              <div className="flex items-start justify-between gap-3 text-xs">
-                <span className="text-gray-400">Nationality</span>
-                <span className="max-w-[60%] break-words text-right font-semibold text-gray-800">
-                  {profile.nationality || "Not specified"}
-                </span>
-              </div>
-            </div>
-
-            <button
-              type="button"
-              onClick={openEditDialog}
-              className="flex w-full items-center justify-center gap-2 rounded-lg bg-[#179BAE] px-4 py-3 text-sm font-semibold text-white transition hover:bg-[#127d8d]"
-            >
-              <Pencil size={15} />
-              Edit Profile
-            </button>
-          </section>
-
-          <section className="min-w-0 md:col-span-2">
-            <h2 className="mb-4 font-serif text-lg font-bold text-gray-900 sm:mb-6 sm:text-xl">
-              Travel Statistics
-            </h2>
-
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <StatCard
-                label="Total Bookings"
-                value={String(activeBookings.length)}
-                icon={<Plane size={21} />}
-                iconClass="bg-cyan-50 text-cyan-500"
-              />
-
-              <StatCard
-                label="Countries Visited"
-                value={String(countriesVisited)}
-                icon={<Globe size={21} />}
-                iconClass="bg-emerald-50 text-emerald-500"
-              />
-
-              <StatCard
-                label="Upcoming Trips"
-                value={String(upcomingTrips)}
-                icon={<TrendingUp size={21} />}
-                iconClass="bg-orange-50 text-orange-400"
-              />
-
-              <StatCard
-                label="Total Spend"
-                value={`$${totalSpend.toLocaleString("en-US")}`}
-                icon={<DollarSign size={21} />}
-                iconClass="bg-fuchsia-50 text-fuchsia-400"
-              />
-            </div>
-
-            <div className="mt-6 rounded-2xl border border-gray-100 bg-white p-4 shadow-sm sm:p-5">
-              <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-cyan-50 text-[#179BAE]">
-                  <CalendarDays size={20} />
-                </div>
-
-                <div className="min-w-0">
-                  <h3 className="font-semibold text-gray-900">
-                    Your Travel Journey
-                  </h3>
-                  <p className="mt-1 text-sm text-gray-500">
-                    You have {upcomingTrips} upcoming{" "}
-                    {upcomingTrips === 1 ? "trip" : "trips"}.
+                  <p className="mt-1 text-sm text-slate-500">
+                    {formatDate(user?.createdAt)}
                   </p>
                 </div>
               </div>
             </div>
           </section>
+
+          <div className="min-w-0 space-y-6">
+            <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+              {[
+                {
+                  label: "Total Bookings",
+                  value: bookings.length,
+                  icon: Ticket,
+                },
+                {
+                  label: "Upcoming Trips",
+                  value: upcomingTrips.length,
+                  icon: Plane,
+                },
+                {
+                  label: "Total Spent",
+                  value: formatPrice(totalSpend),
+                  icon: Wallet,
+                },
+                {
+                  label: "Countries Visited",
+                  value: countriesVisited,
+                  icon: Globe,
+                },
+              ].map((stat) => {
+                const Icon = stat.icon;
+
+                return (
+                  <div
+                    key={stat.label}
+                    className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="text-sm text-slate-500">{stat.label}</p>
+
+                      <div className="rounded-xl bg-cyan-50 p-2">
+                        <Icon className="h-5 w-5 text-cyan-700" />
+                      </div>
+                    </div>
+
+                    <p className="mt-4 break-words text-2xl font-bold text-slate-900">
+                      {stat.value}
+                    </p>
+                  </div>
+                );
+              })}
+            </section>
+
+            <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <h2 className="text-lg font-bold text-slate-900">
+                    My Bookings
+                  </h2>
+
+                  <p className="mt-1 text-sm text-slate-500">
+                    Your travel reservations and booking status.
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => router.push("/bookings")}
+                  className="inline-flex items-center gap-2 self-start text-sm font-semibold text-cyan-700 hover:text-cyan-800"
+                >
+                  View all
+                  <ArrowRight className="h-4 w-4" />
+                </button>
+              </div>
+
+              {bookings.length === 0 ? (
+                <div className="py-12 text-center">
+                  <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-slate-100">
+                    <Ticket className="h-7 w-7 text-slate-400" />
+                  </div>
+
+                  <h3 className="mt-4 font-semibold text-slate-800">
+                    No bookings found
+                  </h3>
+
+                  <p className="mt-2 text-sm text-slate-500">
+                    Your reservations will appear here after booking a trip.
+                  </p>
+
+                  <button
+                    type="button"
+                    onClick={() => router.push("/destinations")}
+                    className="mt-5 rounded-xl bg-cyan-600 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-cyan-700"
+                  >
+                    Explore Destinations
+                  </button>
+                </div>
+              ) : (
+                <div className="mt-5 space-y-4">
+                  {bookings.slice(0, 5).map((booking, index) => {
+                    const id =
+                      booking._id ||
+                      booking.id ||
+                      booking.bookingId ||
+                      `booking-${index}`;
+
+                    const status = getBookingStatus(booking);
+
+                    const statusStyle =
+                      status === "confirmed"
+                        ? "bg-emerald-50 text-emerald-700"
+                        : status === "cancelled"
+                          ? "bg-red-50 text-red-700"
+                          : "bg-amber-50 text-amber-700";
+
+                    const StatusIcon =
+                      status === "confirmed"
+                        ? CheckCircle2
+                        : status === "cancelled"
+                          ? CircleX
+                          : Clock;
+
+                    return (
+                      <article
+                        key={id}
+                        className="flex flex-col gap-4 rounded-xl border border-slate-100 p-4 transition hover:border-cyan-100 sm:flex-row sm:items-center"
+                      >
+                        <div className="relative h-36 w-full shrink-0 overflow-hidden rounded-lg bg-slate-100 sm:h-24 sm:w-32">
+                          {getBookingImage(booking) !== "/placeholder.jpg" ? (
+                            <Image
+                              src={getBookingImage(booking)}
+                              alt={getBookingTitle(booking)}
+                              fill
+                              sizes="(max-width: 640px) 100vw, 128px"
+                              className="object-cover"
+                              unoptimized
+                            />
+                          ) : (
+                            <div className="flex h-full items-center justify-center">
+                              <Plane className="h-8 w-8 text-slate-400" />
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="min-w-0 flex-1">
+                          <h3 className="truncate font-semibold text-slate-900">
+                            {getBookingTitle(booking)}
+                          </h3>
+
+                          <p className="mt-2 text-sm text-slate-500">
+                            Booking ID:{" "}
+                            {booking.bookingId ||
+                              booking._id ||
+                              booking.id ||
+                              "N/A"}
+                          </p>
+
+                          <p className="mt-1 text-sm text-slate-500">
+                            Departure: {formatDate(getBookingDate(booking))}
+                          </p>
+
+                          <div className="mt-3 flex flex-wrap items-center gap-3">
+                            <span
+                              className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold capitalize ${statusStyle}`}
+                            >
+                              <StatusIcon className="h-3.5 w-3.5" />
+                              {status}
+                            </span>
+
+                            <span className="text-sm font-bold text-slate-900">
+                              {formatPrice(getBookingPrice(booking))}
+                            </span>
+                          </div>
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+              )}
+            </section>
+
+            <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
+              <h2 className="text-lg font-bold text-slate-900">
+                Account Information
+              </h2>
+
+              <div className="mt-5 grid grid-cols-1 gap-5 sm:grid-cols-2">
+                <div className="flex items-start gap-3">
+                  <UserRound className="mt-0.5 h-5 w-5 text-cyan-600" />
+
+                  <div className="min-w-0">
+                    <p className="text-sm text-slate-500">Full Name</p>
+                    <p className="mt-1 break-words font-medium text-slate-800">
+                      {user?.name || "Not provided"}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-start gap-3">
+                  <Mail className="mt-0.5 h-5 w-5 text-cyan-600" />
+
+                  <div className="min-w-0">
+                    <p className="text-sm text-slate-500">Email Address</p>
+                    <p className="mt-1 break-all font-medium text-slate-800">
+                      {user?.email || "Not provided"}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-start gap-3">
+                  <MapPin className="mt-0.5 h-5 w-5 text-cyan-600" />
+
+                  <div>
+                    <p className="text-sm text-slate-500">Nationality</p>
+                    <p className="mt-1 font-medium text-slate-800">
+                      {user?.nationality || "Not provided"}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-start gap-3">
+                  <CalendarDays className="mt-0.5 h-5 w-5 text-cyan-600" />
+
+                  <div>
+                    <p className="text-sm text-slate-500">Joined</p>
+                    <p className="mt-1 font-medium text-slate-800">
+                      {formatDate(user?.createdAt)}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </section>
+          </div>
         </div>
       </div>
 
-      {isDialogOpen && (
+      {editing && (
         <div
-          className="fixed inset-0 z-[100] flex items-center justify-center overflow-y-auto bg-black/50 px-3 py-4 backdrop-blur-sm sm:px-4 sm:py-6"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget && !isSaving) {
-              setIsDialogOpen(false);
+          className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-slate-950/50 p-4"
+          onClick={(event) => {
+            if (event.target === event.currentTarget && !saving) {
+              setEditing(false);
             }
           }}
         >
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="edit-profile-title"
-            className="my-auto max-h-[calc(100dvh-2rem)] w-full max-w-md overflow-y-auto rounded-2xl bg-white p-4 shadow-2xl sm:max-h-[calc(100dvh-3rem)] sm:p-8"
-          >
-            <div className="mb-6 flex items-start justify-between gap-4">
+          <div className="my-auto w-full max-w-lg rounded-2xl bg-white p-5 shadow-xl sm:p-7">
+            <div className="flex items-center justify-between gap-4">
               <div>
-                <h2
-                  id="edit-profile-title"
-                  className="text-xl font-bold text-gray-900"
-                >
+                <h2 className="text-xl font-bold text-slate-900">
                   Edit Profile
                 </h2>
-                <p className="mt-1 text-sm text-gray-500">
-                  Update your name, profile photo and nationality.
+
+                <p className="mt-1 text-sm text-slate-500">
+                  Update your personal information.
                 </p>
               </div>
 
               <button
                 type="button"
-                disabled={isSaving}
-                onClick={() => setIsDialogOpen(false)}
-                aria-label="Close dialog"
-                className="shrink-0 rounded-lg p-2 text-gray-400 transition hover:bg-gray-100 hover:text-gray-700 disabled:opacity-50"
+                onClick={() => setEditing(false)}
+                disabled={saving}
+                aria-label="Close edit profile"
+                className="rounded-lg p-2 text-slate-500 transition hover:bg-slate-100 disabled:opacity-50"
               >
-                <X size={20} />
+                <X className="h-5 w-5" />
               </button>
             </div>
 
-            <form onSubmit={handleSave} className="space-y-4 sm:space-y-5">
-              <div className="flex flex-col items-center">
-                <img
-                  src={imageInput.trim() || DEFAULT_IMAGE}
-                  alt="Profile preview"
-                  onError={(event) => {
-                    event.currentTarget.onerror = null;
-                    event.currentTarget.src = DEFAULT_IMAGE;
-                  }}
-                  className="h-20 w-20 rounded-full border border-gray-200 object-cover sm:h-24 sm:w-24"
-                />
-                <span className="mt-3 text-xs text-gray-500">
-                  Profile photo preview
-                </span>
-              </div>
-
+            <form
+              className="mt-6 space-y-5"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void updateProfile();
+              }}
+            >
               <div>
                 <label
                   htmlFor="profile-name"
-                  className="mb-2 block text-sm font-semibold text-gray-700"
+                  className="mb-2 block text-sm font-medium text-slate-700"
                 >
                   Full Name
                 </label>
 
-                <div className="relative">
-                  <UserRound
-                    size={18}
-                    className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"
-                  />
-                  <input
-                    id="profile-name"
-                    type="text"
-                    value={nameInput}
-                    onChange={(event) => setNameInput(event.target.value)}
-                    placeholder="Enter your full name"
-                    maxLength={100}
-                    required
-                    disabled={isSaving}
-                    className="w-full rounded-xl border border-gray-200 py-3 pl-10 pr-3 text-sm outline-none transition placeholder:text-gray-400 focus:border-[#179BAE] focus:ring-2 focus:ring-[#179BAE]/15 disabled:bg-gray-50"
-                  />
-                </div>
+                <input
+                  id="profile-name"
+                  type="text"
+                  value={formData.name}
+                  onChange={(event) =>
+                    setFormData((previous) => ({
+                      ...previous,
+                      name: event.target.value,
+                    }))
+                  }
+                  required
+                  className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none transition focus:border-cyan-500 focus:ring-2 focus:ring-cyan-100"
+                  placeholder="Enter your name"
+                />
               </div>
 
               <div>
                 <label
                   htmlFor="profile-image"
-                  className="mb-2 block text-sm font-semibold text-gray-700"
+                  className="mb-2 block text-sm font-medium text-slate-700"
                 >
                   Profile Image URL
                 </label>
 
-                <div className="relative">
-                  <ImageIcon
-                    size={18}
-                    className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"
-                  />
-                  <input
-                    id="profile-image"
-                    type="url"
-                    value={imageInput}
-                    onChange={(event) => setImageInput(event.target.value)}
-                    placeholder="https://example.com/image.jpg"
-                    maxLength={2048}
-                    disabled={isSaving}
-                    className="w-full rounded-xl border border-gray-200 py-3 pl-10 pr-3 text-sm outline-none transition placeholder:text-gray-400 focus:border-[#179BAE] focus:ring-2 focus:ring-[#179BAE]/15 disabled:bg-gray-50"
-                  />
-                </div>
-
-                <p className="mt-2 text-xs text-gray-400">
-                  Enter a publicly accessible image URL.
-                </p>
+                <input
+                  id="profile-image"
+                  type="url"
+                  value={formData.profileImage}
+                  onChange={(event) =>
+                    setFormData((previous) => ({
+                      ...previous,
+                      profileImage: event.target.value,
+                    }))
+                  }
+                  className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none transition focus:border-cyan-500 focus:ring-2 focus:ring-cyan-100"
+                  placeholder="https://example.com/image.jpg"
+                />
               </div>
 
               <div>
                 <label
-                  htmlFor="nationality"
-                  className="mb-2 block text-sm font-semibold text-gray-700"
+                  htmlFor="profile-nationality"
+                  className="mb-2 block text-sm font-medium text-slate-700"
                 >
                   Nationality
                 </label>
 
-                <div className="relative">
-                  <Globe
-                    size={18}
-                    className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"
-                  />
-                  <input
-                    id="nationality"
-                    type="text"
-                    value={nationalityInput}
-                    onChange={(event) =>
-                      setNationalityInput(event.target.value)
-                    }
-                    placeholder="e.g. Bangladesh"
-                    maxLength={80}
-                    disabled={isSaving}
-                    className="w-full rounded-xl border border-gray-200 py-3 pl-10 pr-3 text-sm outline-none transition placeholder:text-gray-400 focus:border-[#179BAE] focus:ring-2 focus:ring-[#179BAE]/15 disabled:bg-gray-50"
-                  />
-                </div>
+                <input
+                  id="profile-nationality"
+                  type="text"
+                  value={formData.nationality}
+                  onChange={(event) =>
+                    setFormData((previous) => ({
+                      ...previous,
+                      nationality: event.target.value,
+                    }))
+                  }
+                  className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none transition focus:border-cyan-500 focus:ring-2 focus:ring-cyan-100"
+                  placeholder="Enter your nationality"
+                />
               </div>
-
-              {error && (
-                <p role="alert" className="break-words text-sm text-red-600">
-                  {error}
-                </p>
-              )}
 
               <div className="flex flex-col-reverse gap-3 pt-2 sm:flex-row sm:justify-end">
                 <button
                   type="button"
-                  disabled={isSaving}
-                  onClick={() => setIsDialogOpen(false)}
-                  className="w-full rounded-xl border border-gray-200 px-5 py-3 text-sm font-semibold text-gray-600 transition hover:bg-gray-50 disabled:opacity-50 sm:w-auto"
+                  onClick={() => setEditing(false)}
+                  disabled={saving}
+                  className="rounded-xl border border-slate-200 px-5 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
                 >
                   Cancel
                 </button>
 
                 <button
                   type="submit"
-                  disabled={isSaving}
-                  className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#179BAE] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#127d8d] disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
+                  disabled={saving}
+                  className="inline-flex items-center justify-center gap-2 rounded-xl bg-cyan-600 px-5 py-3 text-sm font-semibold text-white transition hover:bg-cyan-700 disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  {isSaving ? (
-                    <Loader2 size={16} className="animate-spin" />
+                  {saving ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
                   ) : (
-                    <Save size={16} />
+                    <Save className="h-4 w-4" />
                   )}
-                  {isSaving ? "Saving..." : "Save Changes"}
+
+                  {saving ? "Saving..." : "Save Changes"}
                 </button>
               </div>
             </form>
@@ -638,24 +814,5 @@ export default function Profile() {
         </div>
       )}
     </main>
-  );
-}
-
-function StatCard({ label, value, icon, iconClass }: StatCardProps) {
-  return (
-    <div className="flex min-w-0 items-center justify-between gap-3 rounded-2xl border border-gray-100 bg-white p-4 shadow-sm sm:p-5">
-      <div className="min-w-0">
-        <p className="text-xs font-medium text-gray-400">{label}</p>
-        <p className="mt-2 break-words text-xl font-bold text-gray-900 sm:text-2xl">
-          {value}
-        </p>
-      </div>
-
-      <div
-        className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full ${iconClass}`}
-      >
-        {icon}
-      </div>
-    </div>
   );
 }
