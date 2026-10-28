@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  <a href="https://wanderlust-omega-nine.vercel.app/"><strong>🚀 Live Demo</strong></a>
+  <a href="https://wanderlust-five-rose.vercel.app/"><strong>🚀 Live Demo</strong></a>
   &nbsp; • &nbsp;
   <a href="#-screenshots"><strong>📸 Screenshots</strong></a>
   &nbsp; • &nbsp;
@@ -231,7 +231,7 @@ Use the backend repository's README for its exact environment variables, availab
 
 ### Frontend — Vercel
 
-**Live application:** https://wanderlust-omega-nine.vercel.app/
+**Live application:** https://wanderlust-five-rose.vercel.app/
 
 1. Import the frontend repository into Vercel.
 2. Configure the required environment variables.
