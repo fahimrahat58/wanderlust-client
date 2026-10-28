@@ -34,9 +34,14 @@ export const auth = betterAuth({
     minPasswordLength: 8,
     maxPasswordLength: 128,
   },
-   plugins: [
-        jwt(), 
-    ],
+  socialProviders: {
+    google: {
+      clientId: process.env.GOOGLE_CLIENT_ID!,
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
+    },
+  },
+
+  plugins: [jwt()],
 
   session: {
     expiresIn: 60 * 60 * 24 * 7,

@@ -58,15 +58,11 @@ const SignIn = () => {
     setLoading(true);
 
     try {
-      const { error: googleError } = await signIn.social({
+      await signIn.social({
         provider: "google",
-        callbackURL: "/",
+        callbackURL: `${window.location.origin}/`,
+        errorCallbackURL: `${window.location.origin}/sign-in`,
       });
-
-      if (googleError) {
-        setError(googleError.message || "Google sign-in failed.");
-        setLoading(false);
-      }
     } catch {
       setError("Unable to sign in with Google. Please try again.");
       setLoading(false);

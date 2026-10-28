@@ -68,21 +68,16 @@ const SignUp = () => {
     setLoading(true);
 
     try {
-      const { error: googleError } = await signIn.social({
+      await signIn.social({
         provider: "google",
-        callbackURL: "/",
+        callbackURL: `${window.location.origin}/`,
+        errorCallbackURL: `${window.location.origin}/sign-up`,
       });
-
-      if (googleError) {
-        setError(googleError.message || "Google sign-up failed.");
-        setLoading(false);
-      }
     } catch {
       setError("Unable to sign up with Google. Please try again.");
       setLoading(false);
     }
   };
-
   return (
     <main className="min-h-screen bg-[#F8FAFC] px-4 pb-10 pt-28 font-sans sm:px-6 sm:pb-12 sm:pt-32">
       <div className="mx-auto flex w-full max-w-md flex-col items-center">
