@@ -903,7 +903,7 @@ export default function DestinationDetailsClient({ id }: { id: string }) {
                   </p>
 
                   <Link
-                    href="/my-bookings"
+                    href="/bookings"
                     className="mt-2 inline-flex items-center gap-1 text-sm font-semibold text-green-800 underline underline-offset-2"
                   >
                     View My Bookings
