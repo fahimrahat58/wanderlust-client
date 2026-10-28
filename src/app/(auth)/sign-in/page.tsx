@@ -140,26 +140,6 @@ const SignIn = () => {
               </div>
             </div>
 
-            <div className="flex items-center justify-between gap-3 pt-1 text-xs">
-              <label className="flex cursor-pointer select-none items-center gap-2 text-slate-600">
-                <input
-                  type="checkbox"
-                  name="rememberMe"
-                  checked={formData.rememberMe}
-                  onChange={handleChange}
-                  className="h-4 w-4 rounded border-slate-300 accent-[#149BBC] focus:ring-[#149BBC]"
-                />
-                Remember me
-              </label>
-
-              <Link
-                href="/forgot-password"
-                className="font-medium text-[#149BBC] hover:underline"
-              >
-                Forgot password?
-              </Link>
-            </div>
-
             {error && (
               <p
                 role="alert"
