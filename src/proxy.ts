@@ -4,7 +4,7 @@ import { getSessionCookie } from "better-auth/cookies";
 const protectedRoutes = ["/profile", "/bookings", "/adddestinations", "/admin"];
 
 export function proxy(request: NextRequest) {
-  const { pathname } = request.nextUrl;
+  const { pathname, search } = request.nextUrl;
 
   const isProtectedRoute = protectedRoutes.some(
     (route) => pathname === route || pathname.startsWith(`${route}/`),
@@ -25,10 +25,7 @@ export function proxy(request: NextRequest) {
 
   const signInUrl = new URL("/sign-in", request.url);
 
-  signInUrl.searchParams.set(
-    "callbackURL",
-    `${pathname}${request.nextUrl.search}`,
-  );
+  signInUrl.searchParams.set("callbackURL", `${pathname}${search}`);
 
   return NextResponse.redirect(signInUrl);
 }
