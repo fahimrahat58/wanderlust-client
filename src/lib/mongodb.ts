@@ -17,10 +17,8 @@ const client =
 const clientPromise =
   globalForMongo.mongoClientPromise ?? client.connect();
 
-if (process.env.NODE_ENV !== "production") {
-  globalForMongo.mongoClient = client;
-  globalForMongo.mongoClientPromise = clientPromise;
-}
+globalForMongo.mongoClient = client;
+globalForMongo.mongoClientPromise = clientPromise;
 
 export { client, clientPromise };
 
