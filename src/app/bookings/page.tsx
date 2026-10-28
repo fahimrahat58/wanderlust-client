@@ -386,7 +386,7 @@ export default function BookingsPage() {
             <button
               type="button"
               onClick={() => router.push("/destinations")}
-              className="mt-6 inline-flex items-center justify-center gap-2 rounded-lg bg-cyan-600 px-5 py-3 text-sm font-semibold text-white transition hover:bg-cyan-700"
+              className="mt-6 inline-flex cursor-pointer! items-center justify-center gap-2 rounded-lg bg-cyan-600 px-5 py-3 text-sm font-semibold text-white transition hover:bg-cyan-700"
             >
               Explore Destinations
               <ArrowRight className="h-4 w-4" />
