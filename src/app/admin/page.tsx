@@ -1,7 +1,7 @@
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
-import AdminInfoClient from "./AdminInfoClient";
+import AddDestinationClient from "./AddDestinationClient";
 
 export default async function AdminPage() {
   const requestHeaders = await headers();
@@ -20,6 +20,5 @@ export default async function AdminPage() {
   if (!adminEmail || userEmail !== adminEmail) {
     redirect("/destinations");
   }
-
-  return <AdminInfoClient />;
+  return <AddDestinationClient />;
 }
