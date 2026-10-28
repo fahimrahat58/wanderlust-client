@@ -11,11 +11,9 @@ const globalForMongo = globalThis as typeof globalThis & {
   mongoClientPromise?: Promise<MongoClient>;
 };
 
-const client =
-  globalForMongo.mongoClient ?? new MongoClient(uri);
+const client = globalForMongo.mongoClient ?? new MongoClient(uri);
 
-const clientPromise =
-  globalForMongo.mongoClientPromise ?? client.connect();
+const clientPromise = globalForMongo.mongoClientPromise ?? client.connect();
 
 globalForMongo.mongoClient = client;
 globalForMongo.mongoClientPromise = clientPromise;
