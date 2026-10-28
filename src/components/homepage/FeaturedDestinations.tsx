@@ -27,7 +27,9 @@ type Destination = {
   rating?: number;
 };
 
-const API_URL = "http://localhost:5000/destinations";
+const API_URL =
+  process.env.NEXT_PUBLIC_API_URL ||
+  "https://wanderlust-server-sand.vercel.app";
 
 const DEFAULT_IMAGE =
   "https://images.unsplash.com/photo-1537996194471-e657df975ab4";
