@@ -48,9 +48,12 @@ export default function FeaturedDestinations() {
         setLoading(true);
         setError("");
 
-        const response = await fetch(API_URL, {
-          cache: "no-store",
-        });
+        const response = await fetch(
+          `${API_URL.replace(/\/+$/, "")}/destinations`,
+          {
+            cache: "no-store",
+          },
+        );
 
         if (!response.ok) {
           throw new Error(`Failed to fetch destinations (${response.status})`);
