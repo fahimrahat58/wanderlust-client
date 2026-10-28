@@ -169,7 +169,7 @@ export default function BookingsPage() {
       });
 
       if (response.status === 401) {
-        router.push("/login");
+        router.push("/sign-in");
         return;
       }
 
@@ -196,7 +196,7 @@ export default function BookingsPage() {
         message.toLowerCase().includes("session has expired") ||
         message.toLowerCase().includes("please log in")
       ) {
-        router.push("/login");
+        router.push("/sign-in");
       }
     } finally {
       setLoading(false);
