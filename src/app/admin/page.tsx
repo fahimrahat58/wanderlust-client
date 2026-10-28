@@ -20,5 +20,6 @@ export default async function AdminPage() {
   if (!adminEmail || userEmail !== adminEmail) {
     redirect("/destinations");
   }
+
   return <AdminInfoClient />;
 }
