@@ -7,7 +7,6 @@ export const dynamic = "force-dynamic";
 
 export default async function AdminPage() {
   const requestHeaders = await headers();
-
   const session = await auth.api.getSession({
     headers: requestHeaders,
   });
