@@ -532,7 +532,7 @@ export default function Profile() {
                   <button
                     type="button"
                     onClick={() => router.push("/destinations")}
-                    className="mt-5 rounded-xl bg-cyan-600 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-cyan-700"
+                    className="mt-5 cursor-pointer! rounded-xl bg-cyan-600 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-cyan-700"
                   >
                     Explore Destinations
                   </button>
