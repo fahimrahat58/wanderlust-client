@@ -508,7 +508,7 @@ export default function Profile() {
                 <button
                   type="button"
                   onClick={() => router.push("/bookings")}
-                  className="inline-flex items-center gap-2 self-start text-sm font-semibold text-cyan-700 hover:text-cyan-800"
+                  className="inline-flex items-center gap-2 cursor-pointer! self-start text-sm font-semibold text-cyan-700 hover:text-cyan-800"
                 >
                   View all
                   <ArrowRight className="h-4 w-4" />
