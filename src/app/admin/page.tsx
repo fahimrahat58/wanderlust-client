@@ -1,10 +1,9 @@
-import { Suspense } from "react";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
 import AdminInfoClient from "./AdminInfoClient";
 
-async function AdminContent() {
+export default async function AdminPage() {
   const requestHeaders = await headers();
 
   const session = await auth.api.getSession({
@@ -23,12 +22,4 @@ async function AdminContent() {
   }
 
   return <AdminInfoClient />;
-}
-
-export default function AdminPage() {
-  return (
-    <Suspense fallback={<div className="p-6">Loading admin dashboard...</div>}>
-      <AdminContent />
-    </Suspense>
-  );
 }
