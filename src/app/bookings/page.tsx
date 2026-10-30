@@ -18,7 +18,7 @@ import {
   AlertTriangle,
 } from "lucide-react";
 
-import { authClient } from "@/lib/auth-client";
+import { apiFetch } from "@/lib/api";
 
 import {
   AlertDialog,
@@ -31,8 +31,6 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL;
-
 export type BookingStatus = "Confirmed" | "Pending" | "Cancelled";
 
 export interface Booking {
@@ -44,39 +42,6 @@ export interface Booking {
   bookingId: string;
   price: number;
   status: BookingStatus;
-}
-
-async function getJwtToken(): Promise<string> {
-  const tokenResponse = await authClient.token();
-  const token = tokenResponse.data?.token;
-
-  if (tokenResponse.error || !token) {
-    throw new Error("Your session has expired. Please log in again.");
-  }
-
-  return token;
-}
-
-async function authenticatedFetch(
-  endpoint: string,
-  options: RequestInit = {},
-): Promise<Response> {
-  const token = await getJwtToken();
-
-  const headers = new Headers(options.headers);
-
-  headers.set("Accept", "application/json");
-  headers.set("Authorization", `Bearer ${token}`);
-
-  if (options.body && !headers.has("Content-Type")) {
-    headers.set("Content-Type", "application/json");
-  }
-
-  return fetch(`${API_URL}${endpoint}`, {
-    ...options,
-    headers,
-    cache: "no-store",
-  });
 }
 
 async function readApiResponse(response: Response) {
@@ -164,7 +129,7 @@ export default function BookingsPage() {
       setLoading(true);
       setError("");
 
-      const response = await authenticatedFetch("/bookings", {
+      const response = await apiFetch("/bookings", {
         method: "GET",
       });
 
@@ -223,7 +188,7 @@ export default function BookingsPage() {
     setIsCancelling(true);
 
     try {
-      const response = await authenticatedFetch(
+      const response = await apiFetch(
         `/bookings/${encodeURIComponent(booking.id)}`,
         {
           method: "PATCH",
@@ -232,7 +197,7 @@ export default function BookingsPage() {
       );
 
       if (response.status === 401) {
-        router.push("/login");
+        router.push("/sign-in");
         return;
       }
 
@@ -271,7 +236,7 @@ export default function BookingsPage() {
     setRemovingId(booking.id);
 
     try {
-      const response = await authenticatedFetch(
+      const response = await apiFetch(
         `/bookings/${encodeURIComponent(booking.id)}`,
         {
           method: "DELETE",
@@ -279,7 +244,7 @@ export default function BookingsPage() {
       );
 
       if (response.status === 401) {
-        router.push("/login");
+        router.push("/sign-in");
         return;
       }
 
